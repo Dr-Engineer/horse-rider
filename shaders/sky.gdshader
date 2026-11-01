@@ -9,6 +9,7 @@ uniform vec3 cloud_light : source_color = vec3(1.0, 0.99, 0.95);
 uniform vec3 cloud_shade : source_color = vec3(0.76, 0.83, 0.94);
 uniform float cloud_cover = 0.5;
 uniform float cloud_speed = 0.004;
+uniform float cloud_scale = 1.1;
 uniform float sun_size = 0.03;
 uniform float bands = 10.0;
 
@@ -47,8 +48,8 @@ void sky() {
 		// Clouds on a plane overhead, hard-edged with a flat shaded underside.
 		vec2 uv = dir.xz / (dir.y + 0.16) * 1.25 + vec2(TIME * cloud_speed, 0.0);
 		float th = 0.75 - cloud_cover * 0.22;
-		float n = fbm(uv * 1.1);
-		float n2 = fbm(uv * 1.1 + vec2(0.0, 0.07));
+		float n = fbm(uv * cloud_scale);
+		float n2 = fbm(uv * cloud_scale + vec2(0.0, 0.07));
 		float mask = smoothstep(0.03, 0.2, dir.y);
 		float body = step(th, n) * mask;
 		float under = step(th, n) * (1.0 - step(th, n2)) * mask;

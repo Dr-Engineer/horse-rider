@@ -10,7 +10,10 @@ var _counter: TextArt
 var _hint: TextArt
 var _chars := 0.0
 var _t := 0.0
+var _speed := SPEED
+var _voiced := false
 const SPEED := 70.0
+const SLOWEST := 9.0
 
 
 func build() -> void:
@@ -51,10 +54,17 @@ func build() -> void:
 
 
 func _start_page() -> void:
-	_label.text = str(_pages[_page])
+	var page := str(_pages[_page])
+	_label.text = page
 	_label.visible_characters = 0
 	_chars = 0.0
 	_counter.set_text("%d/%d" % [_page + 1, _pages.size()])
+	# With a voice, the words are typed out as they are spoken and the last one lands as the voice ends.
+	var secs := Speak.text(StoryText.narrator(Game.player_id).to_lower(), page)
+	_voiced = secs > 0.0
+	_speed = SPEED
+	if _voiced:
+		_speed = clampf(float(page.length()) / maxf(secs - 0.2, 0.5), SLOWEST, SPEED)
 
 
 func _process(delta: float) -> void:
@@ -63,11 +73,11 @@ func _process(delta: float) -> void:
 		return
 	var total := _label.get_total_character_count()
 	if _label.visible_characters < total:
-		_chars += delta * SPEED
+		_chars += delta * _speed
 		var n := mini(int(_chars), total)
 		if n != _label.visible_characters:
 			_label.visible_characters = n
-			if n % 3 == 0:
+			if n % 3 == 0 and not _voiced:
 				Sfx.play("ui_move", -16.0, 1.5)
 	_hint.visible = _label.visible_characters >= total and fmod(_t * 2.0, 2.0) < 1.4
 
@@ -77,6 +87,7 @@ func _advance() -> void:
 	if _label.visible_characters < total:
 		_label.visible_characters = total
 		return
+	Speak.stop()
 	Sfx.play("ui_ok", -4.0)
 	_page += 1
 	if _page >= _pages.size():

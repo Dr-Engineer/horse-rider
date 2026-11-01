@@ -54,6 +54,36 @@ const LOAN_LINES: Array[String] = [
 const END_CARD := "This story is a tall tale. Tibetans raced horses and shot at targets at a gallop. They did not, as far as anyone knows, hit each other with iron keys.\n\nIn 1954 motor roads reached Lhasa. In the years that followed, this way of life was changed by war and exile. Many Tibetans still ride and race, in Tibet and beyond.\n\nTo hear Tibetans tell their own history, start with the Tibet Oral History Project and Tsering Shakya's \"The Dragon in the Land of Snows\"."
 
 const TALL_TALE_LINE := "HORSEBACK BRAWLING IS A TALL TALE, NOT HISTORY."
+const SOUND_OFF_LINE := "SOUND IS OFF - SEE OPTIONS"
+const PHRASEBOOK_NOTE := "PHRASES AWAIT REVIEW BY A TIBETAN SPEAKER."
+
+## The side bet, in each rival's own voice. `offer` is made on the pre-race card, `won` is said when you finished ahead of
+## them and they pay, `lost` when they finished ahead of you. No line names a sum, so the voice files never depend on the stake.
+const WAGER := {
+	"wangyal": {"offer": "A wager, friend? Finish ahead of me and the silver is yours. You will not.", "won": "You beat me? Take the silver. I let you. Everyone saw me let you.", "lost": "Never lost, never will. Your silver looks lovely in my sleeve."},
+	"karma": {"offer": "A wager? I trust nobody. Put your silver where I can see it.", "won": "Hm. Lucky. Take it, and watch your back.", "lost": "Forty years on this road. Did you think I would lose?"},
+	"sonam": {"offer": "Bet on the slow one. Salt always arrives.", "won": "You were quicker. Take it. Salt will still arrive.", "lost": "Salt does not hurry. Salt does collect."},
+	"pasang": {"offer": "Bet me. Pass me in my lane or pay.", "won": "You passed me. Fine. Silver. Do not make a habit of it.", "lost": "My lane, my race, my silver."},
+	"samdup": {"offer": "A wager! I will win it hanging off the saddle. Watch!", "won": "That was a trick! I let you win! It was a trick!", "lost": "Did you see that? Of course you did. Pay up, friend."},
+	"temba": {"offer": "By-law fourteen permits a small wager. By-law fourteen is new.", "won": "Paid under protest. I am writing this down.", "lost": "Payment is due under by-law fourteen. It is still new."},
+	"pema": {"offer": "A friendly wager? Only a little one, for tea money.", "won": "Oh, well ridden! Here. Spend it on tea.", "lost": "Oh dear. Sorry. Thank you. Sorry."},
+	"dukpa": {"offer": "Might I suggest a small wager? After you. Mind the ditch.", "won": "How kind of you to win. Here is your silver.", "lost": "So kind of you to lose. Thank you ever so much."},
+	"thupden": {"offer": "A bet! Win, and I owe you. I hate owing.", "won": "I owe you. I hate owing. Take it before I change my mind.", "lost": "Now you owe me silver and a hat!"},
+	"drukmo": {"offer": "Wager with me. I came to collect. Come and stop me.", "won": "You collected this time. Enjoy it.", "lost": "I collect. It is what I do."},
+	"genden": {"offer": "A wager is good for the circulation! Small stakes, big heartbeat.", "won": "Excellent! Strong pulse! Here is your silver. Drink some water.", "lost": "That is a doctor's fee. Also, you are dehydrated."},
+	"pamo": {"offer": "A wager. I only accept the ones I have already won.", "won": "Interesting. I miscalculated. It will not recur.", "lost": "Exactly as calculated. Thank you."},
+	"diki": {"offer": "Bet me, darling. It is only silver. Everything is only silver.", "won": "Faster than me? Impossible. Here, quickly, before anyone sees.", "lost": "Faster, always faster. Pay up, darling."},
+	"chakri": {"offer": "A wager, friend? Whoever wins, the beggars eat tonight.", "won": "You beat me! We are friends now. Take your silver, friend.", "lost": "Good fight! Your silver feeds the beggars. They thank you."},
+	"serkhar": {"offer": "A wager! I shall pay you in full if I lose. Eventually.", "won": "You win. I will pay you. Eventually. Today, even. Look!", "lost": "Thank you. I shall spend it all on being magnificent."},
+	"ama": {"offer": "A wager, dear? It stays in the family either way.", "won": "Hm. Take it. I will add the interest to your bill.", "lost": "Interest, dear. It is only business."},
+}
+
+## For a rival with no lines of their own.
+const WAGER_GENERIC := {
+	"offer": ["A little wager on the race? Finish ahead of me and the silver is yours.", "Care for a side bet? Ahead of me, you win. Behind me, you pay.", "A wager, then? Silver on who finishes first."],
+	"won": ["You beat me. Fine. Here is your silver.", "Well ridden. Take it.", "Lucky today. Take the silver."],
+	"lost": ["Behind me, as promised. Pay up.", "I told you. Silver, please.", "A fair bet, fairly won. Thank you."],
+}
 
 
 static func narrator(player_id: String) -> String:
@@ -66,6 +96,15 @@ static func narrator_title(player_id: String) -> String:
 
 static func course_fallback(index: int) -> Dictionary:
 	return COURSES[clampi(index, 0, COURSES.size() - 1)]
+
+
+## kind is "offer", "won" (you finished ahead of them) or "lost" (they finished ahead of you).
+static func wager_line(rival_id: String, kind: String) -> String:
+	var own: Variant = WAGER.get(rival_id)
+	if own is Dictionary and (own as Dictionary).has(kind):
+		return str((own as Dictionary)[kind])
+	var pool: Array = WAGER_GENERIC.get(kind, [])
+	return "" if pool.is_empty() else str(pool[absi(rival_id.hash()) % pool.size()])
 
 
 static func intro_pages(player_id: String) -> Array[String]:
@@ -116,9 +155,19 @@ static func credits_lines() -> Array[String]:
 		"DESIGN, CODE, ART, MUSIC AND SOUND",
 		"MADE WITH CLAUDE",
 		"",
-		"EVERY MODEL, PICTURE AND SOUND IS GENERATED BY SCRIPTS",
+		"EVERY MODEL, PICTURE AND SOUND EFFECT IS GENERATED BY SCRIPTS",
 		"MUSIC IS ORIGINAL, PLAYED BY A SYNTHESISED LUTE,",
 		"FRAME DRUM, CYMBAL AND LOW HORN",
+		"",
+		"- THE VOICES -",
+		"",
+		"THE VOICES ARE MADE BY SPEECH MODELS, NOT RECORDED.",
+		"THEY ARE NOT ORIGINAL TO THIS GAME.",
+		"ENGLISH USES KOKORO-82M (APACHE 2.0).",
+		"TIBETAN USES META MMS-TTS (CC BY-NC 4.0),",
+		"WHICH IS FOR NON-COMMERCIAL USE ONLY.",
+		"THE TIBETAN LINES STILL NEED CHECKING",
+		"BY TIBETAN SPEAKERS.",
 		"",
 		"- THE CAST -",
 		"",

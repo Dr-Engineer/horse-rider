@@ -29,8 +29,14 @@ Riders live in track space: `s` metres along the course, `d` metres right of cen
 - **Whip (sprint):** burns stamina for extra top speed. Empty stamina means a lower top speed until it
   recovers.
 - **Steer:** lateral speed scales with current speed, as in Road Rash. Curves push you outward in
-  proportion to speed squared, so you lean into bends.
+  proportion to speed squared, so you lean into bends. Roads are narrow (11 to 15 m, down to 9 at bridges and through
+  villages) and bend every few seconds, radius 40 to 75 m at the tightest. Nobody can just hold the throttle down, and a
+  fast horse has to ease off for the sharpest ones. A bend keeps its radius in every Season: longer courses turn further.
 - **Off-road:** verge and scrub slow you. Rocks, walls and trees throw you.
+- **Wind trail (the catch-up):** a galloping horse leaves stiller air behind it, shown as a line of turquoise streaks.
+  Riding in it, a horse has less to push through: up to +12% top speed and +80% acceleration, and the whip costs 35% less
+  stamina. It reaches 55 m back, strongest close up and spreading as it fades, so anyone who has fallen behind has a way
+  back in touch and the leader never has one. Rivals seek it out too. The HUD shows how far in you are.
 - **Leap:** clears ramps, streams and logs. A boulder can't be leapt.
 - **Second Wind:** spends a full Lungta meter on 4 seconds of extra speed with shake immunity.
 
@@ -57,25 +63,45 @@ whose health is already gone.
 
 | Weapon | Tibetan | Class | Damage | Impact | Reach m | Swing s | Notes |
 |---|---|---|---|---|---|---|---|
-| Fists | | body | 5 | 10 | 1.9 | 0.33 | Always available |
-| Kick | | body | 6 | 20 | 2.1 | 0.5 | Shoves target sideways |
-| Barge | | body | 4 | 18 | contact | n/a | Scales with sideways speed and horse bulk |
-| Knife | gri | melee | 10 | 8 | 2.0 | 0.3 | Fastest blade |
-| Pen case | | melee | 7 | 20 | 2.1 | 0.42 | Gravel-filled, cheap and comic |
-| Whip | | melee | 6 | 15 | 3.0 | 0.34 | Long and quick |
-| Sword | ral gri | melee | 18 | 24 | 2.6 | 0.55 | Best all-round |
-| Iron key | lde brdzus | melee | 15 | 38 | 3.5 | 0.7 | On a thong, outreaches swords, weak up close |
-| Spear | mdung | melee | 16 | 34 | 4.0 | 0.75 | At a full gallop, +25% impact |
-| Sling | 'ur rdo | ranged | 3 | 6 | 28 | 0.8 | Side-swung, plentiful stones |
-| Bow | gzhu | ranged | 7 | 8 | 45 | hold | Draw to aim, +30% at full draw, 12 arrows |
-| Roped spear | thag mdung | ranged | 9 | 12 | 18 | 1.1 | Thrown then hauled back, no ammo |
+| Fists | | body | 8.4 | 10 | 1.9 | 0.33 | Always available, no shove, no penalty |
+| Kick | | body | 4.2 | 20 | 2.1 | 0.62 | Lands after 0.3 s and costs 10% of your speed while it lasts, but shoves the target more than 6 m away |
+| Barge | | body | 5.6 | 18 | contact | n/a | Scales with sideways speed and horse bulk |
+| Knife | gri | melee | 14 | 8 | 2.0 | 0.3 | Fastest blade |
+| Pen case | | melee | 9.8 | 20 | 2.1 | 0.42 | Gravel-filled, cheap and comic |
+| Whip | | melee | 8.4 | 15 | 3.0 | 0.34 | Long and quick |
+| Sword | ral gri | melee | 25.2 | 24 | 2.6 | 0.55 | Best all-round |
+| Iron key | lde brdzus | melee | 21 | 38 | 3.5 | 0.7 | On a thong, outreaches swords, weak up close |
+| Spear | mdung | melee | 22.4 | 34 | 4.0 | 0.75 | At a full gallop, +25% impact |
+| Sling | 'ur rdo | ranged | 5.6 | 6 | 28 | 0.8 | Side-swung, 297 stones (rivals carry a third of any ammo) |
+| Bow | gzhu | ranged | 11.9 | 8 | 45 | hold | Draw to aim, +30% at full draw, 36 arrows |
+| Roped spear | thag mdung | ranged | 14.7 | 12 | 27 | 1.1 | Thrown then hauled back, no ammo |
+
+**Aiming:** the mouse moves a sight, and nothing aims for you. Hold the right button to draw and let go to loose. A shot
+flies through the world with real physics: it leaves the hand with the horse's own velocity added, gravity pulls it down at
+9.8 m/s² and the air slows it. So you aim above a far target and ahead of one moving differently from you, and a shot at
+a roadside pole drifts forward with your own speed. A weak draw throws slower (55% of full speed at the least) and drops
+sooner. At full draw, a level bow shot drops 0.2 m at 15 m and 2 m at 45 m. A sling stone drops 1.9 m at 26 m. Marks under
+the sight show the drop at 15, 30 and 45 m, the view tightens as you draw, and a line follows your own shots so you can
+learn the arc. A shot only counts on the rider: below the saddle it would strike the horse, and horses are never hurt, so
+it flies on. A shot to the head can take a hat off. Arrows that miss stay stuck in the ground for a while. Rivals work out
+the same physics, then miss by however much their skill allows. Drawing a shot costs 7% of the horse's top speed.
+
+**Slams and momentum:** steer hard into a rider from the side with a real edge on them and you slam them: a barge, and both of you carry on sideways.
+An edge means at least 4.5 m/s of sideways speed toward them, and 3 more units of sideways momentum (speed times the horse's bulk) than they have, whichever
+way they're going. Meeting a rider coming just as hard, or catching one going nearly as fast, is no slam: the horses just lean on each other. The heavier horse
+loses less of its speed, and the rider who slammed keeps going even with the reins let go, for about a second as the momentum fades. Shoving someone off the road
+is fair: past the scrub they're thrown.
+
+**The 1.5x strike** is rare and has to be earned: 6.5 m/s of sideways speed toward the target, nearly all a horse has at a full gallop, and 5.5 more units of sideways
+momentum than they have, so they must be holding their line. A slam that hard also sets it up for 0.8 seconds after, and the HUD says when. Ranged hits never get it. In
+simulated races about 2% of hits land this way.
 
 **Shield (phub):** hold to raise. Cuts damage by 75% and impact by 65% from the side it faces, but slows
 you and you can't strike. A hit in the first 0.2 seconds of raising is a **parry**: the attacker gets +25
 shake and you gain Lungta. A shield blocks arrows from any side.
 
-**Reach rules from history:** at under 1.5 m, key and spear lose half their damage; swords and knives
-don't. So fighters want the range that suits them.
+**Reach rules from history:** inside 2 m a spear has no room to work and does a third of its damage. At under 1.5 m a key does half. Swords
+and knives don't suffer. So fighters want the range that suits them.
 
 **Taking weapons:** hitting a rider out of the saddle or as they swing lets you snatch their melee
 weapon for the rest of the race, if it's better than yours. Otherwise it drops on the course to pick up.
@@ -97,9 +123,36 @@ and falls with how you ride.
   a little Lungta. These are festival prizes, not white khata, which never go on the ground in-game.
 - **Target poles:** hit a red-cloth pole with a ranged shot as you pass for a silver bonus, after the
   Gallop Behind the Fort.
+- **Bullseyes:** festival archery targets stand off the road on every course and face the riders coming. Each pays once, by the ring: 5, 10,
+  or 20 for the middle.
+- **Wolves at the sheep:** flocks graze off the road with a wolf or two circling and running at them. Driving off a wolf pays 12. Hitting a sheep costs a
+  fine of 8, on the road as well. Nothing dies: a wolf that's hit yelps and runs for the hills, and a sheep bolts and comes back.
+- All of these pay half as much again in Season 2 and double in Season 3. A blow from the saddle counts too (a struck bullseye pays 10), but it means riding
+  the rough to get in reach, and the rough costs about 40% of your speed. Rivals ride past them, and their stray shots cost and earn nothing.
 - **Mud-and-rock ramps:** leap for shortcuts and a small bonus.
 - **High pass:** crossing the cairn gives the cry "KI KI SO SO!" and a burst of Lungta with coloured paper
   squares in the air.
+
+### Showing off (player only, silver and shouting, no effect on anyone's riding)
+
+- **Near miss:** passing a boulder, yak or mule within about a metre at speed: CLOSE! +2 silver and a sliver of Lungta. Sacred sites
+  never count: skimming a mani wall or chorten earns nothing.
+- **Hats:** a hard hit or a fall can knock a rider's hat off. It spins away and stays on the road, and the rider complains. Knocking one off
+  yourself earns a little silver. Hatless riders stay hatless until the next race.
+- **Knockdown streak:** another knockdown within 25 seconds calls DOUBLE!, TRIPLE! or RAMPAGE! and pays part of a bounty again.
+- **Overtakes** are called out by name. The results screen counts hats, near misses, overtakes and your best streak.
+
+## Side bets
+
+The pre-race card can include an offer from the featured rival: finish ahead of them and win the stake, finish behind and lose it.
+The stake is 15% of your silver in steps of 5, from 20 to 200, and it can never leave you under 20. So there's no offer under 40 silver,
+and a lost bet can't trigger your aunt's loan. A bet lasts one race and isn't saved. It's the story's great wager at the scale of one rider.
+
+## Voices
+
+Rivals talk during races (`scripts/race/chatter.gd`): when they pass you, when you pass them, when they hit or are hit, when anyone falls,
+when they ride alongside. One voice at a time, a few seconds apart, and rivals with a grudge talk more. Quiet Ground stays quiet, apart from
+the steward telling everyone to put their hands down. Options sets the language: both, Tibetan or English. Muted players still get subtitles.
 
 ## Hazards
 
@@ -113,9 +166,9 @@ the fine if you're caught later. **The PLA and any real authority stay offstage.
 ## Rival AI
 
 Each rival has data for skill, aggression, weapon, horse, lane habit and a personality trait. Behaviours:
-line choice with hazard avoidance; matches speed to fight; backs off below 30 health and returns after
-recovering; uses the shield when threatened; ranged riders hang back and harass; mild catch-up only, so
-that a leader can still be caught but no one teleports.
+line choice with hazard avoidance; tucks into wind trails, then pulls out to pass; matches speed to fight; backs off
+below 30 health and returns after recovering; uses the shield when threatened; ranged riders hang back and harass; mild
+catch-up only, so that a leader can still be caught but no one teleports.
 
 **Grudges:** rivals remember. Knock one down and that rival targets you first next race and says so in
 pre-race talk. Finish behind someone repeatedly and they get cocky. Stored in the save.
@@ -155,9 +208,11 @@ Leopard, tiger and otter never appear as items or rewards.
 | Steer, urge, rein in | WASD or arrows | Left stick, RT urge, LT rein |
 | Whip | Left Shift | RB |
 | Leap | Space | A |
-| Strike left / right | J / L, or Q / E, or left / right mouse | X / B |
+| Strike left / right | J / L, or Q / E. Left and right mouse if you carry no ranged weapon | X / B |
+| Strike at the nearest rival | Left mouse, when you carry a ranged weapon | |
 | Kick (auto side) | K or F | Y |
-| Ranged (hold, release) | U or R | Right stick click or D-pad up |
+| Aim | Mouse | Right stick |
+| Draw, then loose on release | Right mouse, or U or R | Right stick click or D-pad up |
 | Shield (hold) | I or C | LB |
 | Second Wind | Enter or Ctrl | D-pad down |
 | Pause | Esc | Start |
@@ -175,8 +230,10 @@ Leopard, tiger and otter never appear as items or rewards.
   the only tough ones.
 - No magic. No mystic Tibet. No outsider saves anyone.
 - Women aren't prizes or ornaments.
-- Horses are never hurt.
+- Horses are never hurt. Animals are never killed: wolves run off and sheep bolt.
 - The game says plainly, on the title and credits, that horseback brawling is a tall tale and not history.
+- Voices: no chanting, mantras or sacred recitation. "Ki ki so so lha gyalo" is the public shout at passes, and it stays. Tibetan speech
+  must be real, and no line is called reviewed until a Tibetan speaker has checked it (`docs/VOICE_SCRIPT.md`).
 
 ## Later: the Visitors
 

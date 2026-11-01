@@ -7,14 +7,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import props_lib as L  # noqa: E402
 import kit  # noqa: E402
+from mathutils import Vector  # noqa: E402
 
 ROBES = ["a1", "madder", "lapis", "malachite_dark", "saffron", "b1", "plum", "ochre", "a2", "cinnabar", "indigo"]
 SKINS = ["skin", "skin_light", "skin_deep", "blush"]
 
 
-def person(b, x, y, face_deg, rng, arms="down", scale=1.0, hat=None):
+def person(b, x, y, face_deg, rng, arms="down", scale=1.0, hat=None, life=None):
+    """life collects UV2 for every vertex: (arm type + the person's own phase, signed arm weight). toon_crowd.gdshader reads it."""
     start = len(b.co)
     s = scale
+    arm_w = {}
     robe = rng.choice(ROBES)
     skin = rng.choice(SKINS)
     L.cyl(b, x, y, 0.0, 1.1 * s, 0.3 * s, n=6, cell=robe, r_top=0.21 * s)
@@ -31,6 +34,7 @@ def person(b, x, y, face_deg, rng, arms="down", scale=1.0, hat=None):
         L.cyl(b, x, y, 1.32 * s, 0.1 * s, 0.17 * s, n=5, cell=rng.choice(["vermilion", "coral", "orpiment"]), r_top=0.16 * s)
     for sx in (-1, 1):
         sh = (x + sx * 0.25 * s, y, 0.98 * s)
+        arm_start = len(b.co)
         if arms == "up":
             b.tube([sh, (sh[0] + sx * 0.15 * s, y + 0.02, sh[2] + 0.3 * s), (sh[0] + sx * 0.22 * s, y + 0.04, sh[2] + 0.6 * s)], [0.07 * s, 0.06 * s, 0.05 * s], n=4, cell=robe)
             L.cyl(b, sh[0] + sx * 0.22 * s, y + 0.04, sh[2] + 0.58 * s, 0.1 * s, 0.06 * s, n=4, cell=skin)
@@ -38,16 +42,26 @@ def person(b, x, y, face_deg, rng, arms="down", scale=1.0, hat=None):
             b.tube([sh, (sh[0] * 0.5 + x * 0.5, y + 0.2 * s, sh[2] - 0.15 * s), (x + sx * 0.05 * s, y + 0.3 * s, sh[2] + 0.05 * s)], [0.07 * s, 0.06 * s, 0.05 * s], n=4, cell=robe)
         else:
             b.tube([sh, (sh[0] + sx * 0.05 * s, y, sh[2] - 0.3 * s), (sh[0] + sx * 0.04 * s, y + 0.05, sh[2] - 0.5 * s)], [0.07 * s, 0.07 * s, 0.06 * s], n=4, cell=robe)
+        reach = 0.62 * s if arms == "up" else 0.5 * s
+        for vi in range(arm_start, len(b.co)):
+            d = (b.co[vi] - Vector(sh)).length
+            arm_w[vi] = sx * min(1.0, d / reach)
     if face_deg:
         L.rot_z(b, face_deg, start=start, end=len(b.co), pivot=(x, y))
+    if life is not None:
+        typ = {"down": 0.0, "clap": 1.0, "up": 2.0}.get(arms, 0.0)
+        phase = rng.random() * 0.98
+        for vi in range(start, len(b.co)):
+            life.append((typ + phase, arm_w.get(vi, 0.0)))
 
 
 def crowd(name, seed, spots):
     rng = random.Random(seed)
     b = L.new(name)
+    life = []
     for (x, y, face, arms, scale) in spots:
-        person(b, x, y, face, rng, arms, scale)
-    return b
+        person(b, x, y, face, rng, arms, scale, life=life)
+    return b, life
 
 
 def crowd_a():
@@ -123,9 +137,9 @@ def food_booth():
 
 
 def run():
-    L.single("crowd_a", crowd_a())
-    L.single("crowd_b", crowd_b())
-    L.single("crowd_c", crowd_c())
+    for name, fn in (("crowd_a", crowd_a), ("crowd_b", crowd_b), ("crowd_c", crowd_c)):
+        cb, life = fn()
+        L.export(name, [(name, cb, life)])
     L.single("festival_tent", festival_tent())
     L.single("food_booth", food_booth())
 

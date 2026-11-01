@@ -2,7 +2,11 @@ class_name TitleScreen
 extends Screen
 ## Title: the name, the tall-tale line, a horse galloping in place, and the way in.
 
+static var _greeted := false     # the narrator says hello once per launch, not every time the title comes back
+
 var _buttons: Array[WButton] = []
+var _options_btn: WButton
+var _sound_note: TextArt
 var _modal: Control = null
 
 
@@ -57,27 +61,43 @@ func build() -> void:
 	var labels: Array = []
 	if Game.has_save():
 		labels.append("CONTINUE")
-	labels.append_array(["NEW GAME", "OPTIONS", "QUIT"])
+	labels.append_array(["NEW GAME", "OPTIONS", "PHRASEBOOK", "QUIT"])
 	_buttons = button_column(safe, labels, 150.0, Vector2(22, 158))
 	var i := 0
 	if Game.has_save():
 		_buttons[i].pressed.connect(_continue)
 		i += 1
 	_buttons[i].pressed.connect(_new_game)
-	_buttons[i + 1].pressed.connect(_options)
-	_buttons[i + 2].pressed.connect(Game.quit_game)
+	_options_btn = _buttons[i + 1]
+	_options_btn.pressed.connect(_options)
+	_buttons[i + 2].pressed.connect(func() -> void: Game.go("phrasebook"))
+	_buttons[i + 3].pressed.connect(Game.quit_game)
 
 	if Game.has_save():
 		var info := "%s  -  SEASON %d  -  %d SRANG" % [str(FallbackData.PLAYERS.get(Game.player_id, {}).get("name", "RIDER")), Game.season + 1, Game.money]
 		var cont := TextArt.new(info, 1, UI.BONE)
-		cont.position = Vector2(22, 266)
+		cont.position = Vector2(22, 284)
 		cont.name = "ContinueInfo"
 		safe.add_child(cont)
+	_sound_note = TextArt.new(StoryText.SOUND_OFF_LINE, 1, UI.ROSE)
+	_sound_note.position = Vector2(22, 314)
+	_sound_note.name = "SoundOff"
+	safe.add_child(_sound_note)
+	_refresh_sound_note()
 	var foot := TextArt.new(StoryText.TALL_TALE_LINE, 1, UI.BONE, HORIZONTAL_ALIGNMENT_CENTER)
 	foot.position = Vector2(0, 340)
 	foot.size = Vector2(640, 14)
 	safe.add_child(foot)
 	focus_later(_buttons[0])
+	if not _greeted:
+		_greeted = true
+		var tw := create_tween()
+		tw.tween_interval(1.1)
+		tw.tween_callback(func() -> void: Speak.say(StoryText.narrator(Game.saved_player_id()).to_lower(), "greet"))
+
+
+func _refresh_sound_note() -> void:
+	_sound_note.visible = Game.sound_is_off()
 
 
 func _continue() -> void:
@@ -99,7 +119,8 @@ func _options() -> void:
 	o.closed.connect(func() -> void:
 		o.queue_free()
 		_modal = null
-		_buttons[_buttons.size() - 2].grab_focus.call_deferred())
+		_refresh_sound_note()
+		_options_btn.grab_focus.call_deferred())
 
 
 func _ask(message: String, on_yes: Callable) -> void:
@@ -130,6 +151,7 @@ func _ask(message: String, on_yes: Callable) -> void:
 	row.add_child(no)
 	add_child(m)
 	_modal = m
+	UI.focus_chain([yes, no], false, false)
 	var close := func() -> void:
 		m.queue_free()
 		_modal = null

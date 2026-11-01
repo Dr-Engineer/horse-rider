@@ -8,6 +8,7 @@ signal happened(kind: String, rider: Rider, info: Dictionary)
 
 const SACRED := ["mani_wall", "chorten"]
 const FLAT_SLOTS := {"a": 0, "b": 1, "c": 2, "d": 3}
+const POLE_HEIGHT := 4.2     # a shot above this goes over a target pole
 
 var track: Track
 var season := 0
@@ -445,12 +446,12 @@ func _throw(r: Rider, what: String, rel_d: float) -> void:
 
 
 ## Called by Race when a projectile passes close to a target pole. Returns true if it scored.
-func pole_shot(r: Rider, proj_s: float, proj_d: float) -> bool:
+func pole_shot(r: Rider, proj_s: float, proj_d: float, proj_h: float) -> bool:
 	for pole in poles:
 		var key := "pole_%d" % int(pole["id"])
 		if r.scarf_taken.has(key):
 			continue
-		if absf(float(pole["s"]) - proj_s) < 1.6 and absf(float(pole["d"]) - proj_d) < 1.3:
+		if absf(float(pole["s"]) - proj_s) < 1.6 and absf(float(pole["d"]) - proj_d) < 1.3 and proj_h < POLE_HEIGHT:
 			r.scarf_taken[key] = true
 			r.silver_bonus += 10
 			r.add_lungta(0.4)
@@ -463,6 +464,19 @@ func pole_shot(r: Rider, proj_s: float, proj_d: float) -> bool:
 # ---------------------------------------------------------------------------------------------
 # AI queries
 # ---------------------------------------------------------------------------------------------
+
+## A shot or a blow reaching a sheep on the road. It bolts, and this says whether there was one there. h is how high a shot is.
+func sheep_struck(at_s: float, at_d: float, reach: float, h: float = 0.0) -> bool:
+	if h > 1.3:
+		return false
+	for m in movers:
+		if m["kind"] == "sheep" and Vector2(float(m["s"]) - at_s, float(m["d"]) - at_d).length() < reach:
+			m["scatter"] = true
+			m["vd"] = signf(float(m["d"]) - at_d + 0.01) * 4.0
+			m["vs"] = 3.0
+			return true
+	return false
+
 
 ## Obstacles ahead of at_s within dist metres: [{s, d, r, kind, sacred, leap}]. For look-ahead avoidance.
 func obstacles_ahead(at_s: float, dist: float) -> Array[Dictionary]:
@@ -527,9 +541,9 @@ func _flat(mesh: Mesh, slot: String, col: Color) -> MeshInstance3D:
 	return mi
 
 
-func _prop_or(name: String) -> Node3D:
+func _prop_or(name: String, walker := false) -> Node3D:
 	if ResourceLoader.exists("res://assets/models/props/%s.glb" % name):
-		return ArtKit.prop(name)
+		return ArtKit.prop_walker(name) if walker else ArtKit.prop(name)
 	return null
 
 
@@ -557,11 +571,7 @@ func _fallback(kind: String, e: Dictionary) -> Node3D:
 			mi2.position.y = 0.4
 			n.add_child(mi2)
 		"mud":
-			var qm := PlaneMesh.new()
-			qm.size = Vector2(float(e.get("w", 8.0)), float(e.get("len", 22.0)))
-			var mi3 := _flat(qm, "a", Color("4a3626"))
-			mi3.position.y = 0.04
-			n.add_child(mi3)
+			return _mud_patch(e)
 		"ramp":
 			var bm := BoxMesh.new()
 			bm.size = Vector3(float(e.get("w", 4.5)), 0.8, float(e.get("len", 6.0)))
@@ -678,13 +688,80 @@ func _fallback(kind: String, e: Dictionary) -> Node3D:
 	return n
 
 
+## A patch of churned mud lying on the road: a grid that follows the road surface (curve and slope included) over the
+## event's width and length, painted by shaders/mud.gdshader into an irregular stair-stepped blob. The mesh is built in
+## the frame of the event, so the node just takes the usual static transform. Every patch gets its own seed.
+func _mud_patch(e: Dictionary) -> Node3D:
+	var es: float = e["s"]
+	var ed: float = e["d"]
+	var hx: float = float(e.get("w", 8.0)) * 0.5
+	var hy: float = float(e.get("len", 22.0)) * 0.5
+	# The blob wanders out a little past the event's box, so the grid is a little bigger than it.
+	var gx := hx * 1.2 + 1.0
+	var gy := hy * 1.2 + 1.0
+	var nx := maxi(int(ceil(gx * 2.0 / 1.5)), 4)
+	var nz := maxi(int(ceil(gy * 2.0 / 1.5)), 4)
+	var frame := track.frame(es, ed, 0.0)
+	var inv := frame.affine_inverse()
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var uv2s := PackedVector2Array()
+	for iz in nz + 1:
+		var s := es - gy + 2.0 * gy * float(iz) / float(nz)
+		var sc := clampf(s, 0.0, track.length)
+		var hw := track.half_width_at(sc)
+		for ix in nx + 1:
+			var d := ed - gx + 2.0 * gx * float(ix) / float(nx)
+			verts.append(inv * track.point(sc, d, 0.075))
+			uvs.append(Vector2(d - ed, s - es))
+			uv2s.append(Vector2(d, hw))
+	var idx := PackedInt32Array()
+	for iz in nz:
+		for ix in nx:
+			var a := iz * (nx + 1) + ix
+			var b := a + 1
+			var c := a + nx + 1
+			var dd := c + 1
+			# clockwise seen from above, like the road ribbon
+			idx.append_array(PackedInt32Array([a, c, b, b, c, dd]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2s
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = ArtKit.mud_material()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var holder := Node3D.new()
+	holder.add_child(mi)
+	var seed_v := fposmod(float(e.get("id", 1)) * 7.31 + es * 0.013, 97.0)
+	mi.set_instance_shader_parameter("seed", seed_v)
+	mi.set_instance_shader_parameter("half_size", Vector2(hx, hy))
+	return holder
+
+
 func _visual_for(kind: String, e: Dictionary) -> Node3D:
+	if kind == "mud":
+		e["is_prop"] = false
+		return _mud_patch(e)
 	var prop_names := {
-		"boulder": "boulder", "mani_wall": "mani_wall", "chorten": "chorten", "ramp": "ramp", "scarf": "scarf",
+		"boulder": "boulder", "mani_wall": "mani_wall", "chorten": "chorten", "ramp": "ramp", "scarf": "scarf", "log": "log",
 		"target_pole": "target_pole", "yak": "yak", "mule": "mule", "sheep": "sheep",
 	}
 	if prop_names.has(kind):
-		var p := _prop_or(prop_names[kind])
+		var pname: String = prop_names[kind]
+		# Every third mule carries the second load.
+		if kind == "mule" and int(e.get("id", 0)) % 3 == 1 and ResourceLoader.exists("res://assets/models/props/mule_b.glb"):
+			pname = "mule_b"
+		var p: Node3D = null
+		if ArtKit.WALKERS.has(pname):
+			p = _prop_or(pname, true)
+		else:
+			p = _prop_or(pname)
 		if p != null:
 			e["is_prop"] = true
 			return p
@@ -734,8 +811,10 @@ func build_visuals(parent: Node3D) -> void:
 		var n2 := _visual_for(m["kind"], m)
 		root.add_child(n2)
 		m["node"] = n2
+	var steward_i := 0
 	for st in stewards:
-		var n3 := _fallback("steward", st)
+		var n3 := _steward_visual(st, steward_i)
+		steward_i += 1
 		root.add_child(n3)
 		st["node"] = n3
 	for p in pickups:
@@ -744,9 +823,11 @@ func build_visuals(parent: Node3D) -> void:
 
 func _tint_scarf(n: Node3D, colour_index: int) -> void:
 	var cols := [Color("2f6fd0"), Color("d9697a"), Color("d63a22"), Color("2fa05a"), Color("f2c632")]
+	# silk catches the light: a little brighter than the plain colour, never white
+	var col: Color = (cols[colour_index % cols.size()] as Color).lightened(0.14)
 	for mi: MeshInstance3D in n.find_children("*", "MeshInstance3D", true, false):
-		mi.set_instance_shader_parameter("slot_a", cols[colour_index % cols.size()])
-		mi.set_instance_shader_parameter("slot_b", cols[colour_index % cols.size()])
+		mi.set_instance_shader_parameter("slot_a", col)
+		mi.set_instance_shader_parameter("slot_b", col)
 
 
 func _make_pickup_visual(p: Dictionary) -> void:
@@ -792,10 +873,16 @@ func _ring_mesh() -> Mesh:
 	return cm
 
 
+var _vis_us := 0
+
+
 ## Move visuals to match the simulation. Cheap: only movers and stewards.
 func update_visuals() -> void:
 	if root == null:
 		return
+	var now_us := Time.get_ticks_usec()
+	var dt := clampf(float(now_us - _vis_us) * 0.000001, 0.0, 0.1) if _vis_us > 0 else 0.016
+	_vis_us = now_us
 	for m in movers:
 		var n: Variant = m.get("node", null)
 		if n == null or not is_instance_valid(n):
@@ -803,19 +890,129 @@ func update_visuals() -> void:
 		var node: Node3D = n
 		var tf := track.frame(float(m["s"]), float(m["d"]), 0.0)
 		var kind: String = m["kind"]
+		var vs := float(m.get("vs", 0.0)) if kind != "yak" else 0.0
+		var vd := float(m.get("vd", 0.0))
+		var speed := Vector2(vs, vd).length()
+		var yaw := float(m.get("_yaw", 0.0))
 		if kind == "yak":
 			# walk sideways across the road: face along the motion
-			var vd: float = m["vd"]
 			var face: float = float(m["dir"]) if absf(vd) < 0.1 else signf(vd)
-			tf.basis = tf.basis * Basis(Vector3.UP, -face * PI * 0.5)
+			yaw = lerp_angle(yaw, -face * PI * 0.5, 1.0 - exp(-dt * 6.0)) if m.has("_yaw") else -face * PI * 0.5
 		elif kind == "sheep":
-			tf.basis = tf.basis * Basis(Vector3.UP, float(m["yaw"]))
+			# idle sheep keep their own heading; one that is running faces where it runs
+			if m.has("_yaw"):
+				if speed > 0.5:
+					yaw = lerp_angle(yaw, atan2(-vd, vs), 1.0 - exp(-dt * 8.0))
+			else:
+				yaw = float(m["yaw"])
+		m["_yaw"] = yaw
+		tf.basis = tf.basis * Basis(Vector3.UP, yaw)
 		node.transform = tf
+		if node.has_meta("walker_meshes"):
+			# Legs swing with the distance covered; a standing animal only nods its head.
+			var stride := ArtKit.walker_stride_length(node)
+			var phase := float(m.get("_ph", float(int(m["id"]) % 13) * 0.9)) + speed * dt / stride * TAU
+			var amp_target := clampf(speed / (stride * 1.3), 0.0, 1.0)
+			var amp := lerpf(float(m.get("_amp", 0.0)), amp_target, 1.0 - exp(-dt * 8.0))
+			phase = fposmod(phase, TAU)
+			m["_ph"] = phase
+			m["_amp"] = amp
+			ArtKit.set_stride(node, phase, amp)
 	for st in stewards:
-		var n2: Variant = st.get("node", null)
-		if n2 != null and is_instance_valid(n2):
-			(n2 as Node3D).transform = track.frame(float(st["s"]), float(st["d"]), 0.0)
+		_update_steward_visual(st, dt)
 	for pole in poles:
 		var nn: Variant = pole.get("node", null)
 		if nn != null and is_instance_valid(nn) and pole.get("hit", false):
 			(nn as Node3D).rotation.z = 0.0
+
+
+# ---------------------------------------------------------------------------------------------
+# Race stewards: rider.glb on foot
+# ---------------------------------------------------------------------------------------------
+
+const STEWARD_SKINS: Array[Color] = [Color("d19a6e"), Color("b97f54"), Color("96603c")]
+const STEWARD_FACES: Array[String] = ["head_old", "head_young", "head_old"]
+
+
+## A steward on foot: the rider model in an indigo robe and a yellow basin hat. Wardrobe rules from docs/INTERFACES.md: one
+## body, one head (tone variant by name), one hat; slot A robe, slot B trim and hat, slot C bare skin, slot D hair.
+func _steward_visual(st: Dictionary, index: int) -> Node3D:
+	var path := "res://assets/models/rider.glb"
+	if not ResourceLoader.exists(path):
+		return _fallback("steward", st)
+	var holder := Node3D.new()
+	var body: Node3D = (load(path) as PackedScene).instantiate()
+	ArtKit.apply(body, ArtKit.toon(ArtKit.CLASS_RIDER, 0.25))
+	holder.add_child(body)
+	var tone := index % 3
+	var face: String = STEWARD_FACES[tone]
+	var head := "%s%s" % [face, ["_lt", "", "_dp"][tone]]
+	var old := face == "head_old"
+	for mi: MeshInstance3D in body.find_children("*", "MeshInstance3D", true, false):
+		var nm := String(mi.name)
+		mi.visible = nm == "body_chuba" or nm == head or nm == "hat_basin"
+		mi.set_instance_shader_parameter("slot_a", Color("2a2a66"))
+		mi.set_instance_shader_parameter("slot_b", Color("f2b632"))
+		mi.set_instance_shader_parameter("slot_c", STEWARD_SKINS[tone])
+		mi.set_instance_shader_parameter("slot_d", Color("9b9595") if old else Color("1c171c"))
+	var ap := body.find_children("*", "AnimationPlayer", true, false)
+	if not ap.is_empty():
+		var player: AnimationPlayer = ap[0]
+		for nm2 in ["run", "stand"]:
+			if player.has_animation(nm2):
+				player.get_animation(nm2).loop_mode = Animation.LOOP_LINEAR
+		if player.has_animation("stand"):
+			player.play("stand")
+		st["ap"] = player
+		st["anim"] = "stand"
+	st["body"] = body
+	st["yaw"] = 0.0
+	st["_lx"] = float(st["s"])
+	st["_ld"] = float(st["d"])
+	st["_spd"] = 0.0
+	return holder
+
+
+func _update_steward_visual(st: Dictionary, dt: float) -> void:
+	var n2: Variant = st.get("node", null)
+	if n2 == null or not is_instance_valid(n2):
+		return
+	var node: Node3D = n2
+	var tf := track.frame(float(st["s"]), float(st["d"]), 0.0)
+	if not st.has("ap"):
+		node.transform = tf
+		return
+	# Speed and heading from how far the steward moved since the last frame, smoothed.
+	var ds := float(st["s"]) - float(st["_lx"])
+	var dd := float(st["d"]) - float(st["_ld"])
+	st["_lx"] = float(st["s"])
+	st["_ld"] = float(st["d"])
+	var inst := Vector2(ds, dd).length() / maxf(dt, 0.001)
+	var spd := lerpf(float(st["_spd"]), inst, 1.0 - exp(-dt * 7.0))
+	st["_spd"] = spd
+	var yaw := float(st["yaw"])
+	if inst > 0.2:
+		yaw = lerp_angle(yaw, atan2(-dd, ds), 1.0 - exp(-dt * 9.0))
+	elif spd < 0.3:
+		# standing at their post, they face the road
+		yaw = lerp_angle(yaw, signf(float(st["d"])) * PI * 0.5, 1.0 - exp(-dt * 3.0))
+	st["yaw"] = yaw
+	tf.basis = tf.basis * Basis(Vector3.UP, yaw)
+	# A struck steward reels.
+	var stagger := float(st.get("stagger", 0.0))
+	if stagger > 0.0:
+		tf.basis = tf.basis * Basis(Vector3(0, 0, 1), sin(Time.get_ticks_msec() * 0.03) * 0.28 * minf(stagger, 1.0))
+	node.transform = tf
+	var player: AnimationPlayer = st["ap"]
+	var want: String = String(st["anim"])
+	if want == "stand" and spd > 0.8:
+		want = "run"
+	elif want == "run" and spd < 0.4:
+		want = "stand"
+	if want != String(st["anim"]) and player.has_animation(want):
+		st["anim"] = want
+		player.play(want, 0.2)
+	if String(st["anim"]) == "run":
+		player.speed_scale = clampf(spd / 3.6, 0.45, 1.5)
+	else:
+		player.speed_scale = 1.0

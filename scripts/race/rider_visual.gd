@@ -6,8 +6,20 @@ extends Node3D
 
 const HORSE_PATH := "res://assets/models/horse.glb"
 const RIDER_PATH := "res://assets/models/rider.glb"
-# ground speed (m/s) at which each horse loop plays at speed_scale 1, to cut foot-skate
-const GAIT_REF := {"gallop": 15.0, "canter": 9.0, "trot": 5.5, "walk": 1.7}
+const HOOFS := ["f_hoof.L", "f_hoof.R", "r_hoof.L", "r_hoof.R"]
+## Cadence (cycles a second) a loop plays at the slow and the fast end of its speed band. As authored, the loops carry
+## the horse only 0.5 to 2.4 m a cycle (measured from the animation tracks, see tests/gait_check.gd), a third of what the
+## ground speed asks for, so the hooves skated. A believable cadence can't close that gap, so these numbers buy what they
+## can and lengthen_strides closes the rest by stretching the legs' swing.
+const GAIT_HZ := {"gallop": Vector2(2.7, 3.5), "canter": Vector2(2.2, 2.9), "trot": Vector2(2.0, 3.0), "walk": Vector2(0.8, 1.6)}
+## A typical ground speed in each gait (a 20 m/s horse in the middle of its band), what fraction of it the planted hooves
+## should keep up with, and the most the swing may be stretched.
+const GAIT_TYPICAL := {"gallop": 19.2, "canter": 11.4, "trot": 5.3, "walk": 1.5}
+const GAIT_GRIP := 0.7
+const SWING_K_MAX := 1.8
+const SWING_BONES := ["f_arm.L", "f_arm.R", "f_can.L", "f_can.R", "r_thigh.L", "r_thigh.R", "r_gas.L", "r_gas.R", "r_can.L", "r_can.R"]
+## The rider's ride loops are one gallop stride long, so they follow the horse's cadence instead of the speed.
+const RIDE_LOOP := 0.4667
 const WEAPON_ROT := Vector3(0, 0, 0)
 
 var rider: Rider
@@ -42,6 +54,12 @@ var _last_shake_pos := Vector3.ZERO
 var _loose_t := 0.0
 var _was_drawing := false
 var _look_height := 0.0
+var _hat_mi: MeshInstance3D = null
+var _horse_hz := 1.0
+var _horse_gait_name := "idle"
+var _slump := 0.0
+var _rear_left := 0.0
+var _reared := false
 
 
 func setup(p_rider: Rider, p_track: Track, p_race: Race) -> void:
@@ -55,6 +73,8 @@ func setup(p_rider: Rider, p_track: Track, p_race: Race) -> void:
 		ArtKit.apply(horse_root, rmat)
 		horse_ap = _first(horse_root, "AnimationPlayer") as AnimationPlayer
 		horse_skel = _first(horse_root, "Skeleton3D") as Skeleton3D
+		if horse_ap != null and horse_skel != null:
+			lengthen_strides(horse_ap, horse_skel)
 		for mi: MeshInstance3D in horse_root.find_children("*", "MeshInstance3D", true, false):
 			horse_meshes.append(mi)
 			mi.set_instance_shader_parameter("slot_c", rider.horse["coat"])
@@ -147,9 +167,35 @@ func _apply_wardrobe() -> void:
 			if names.has(fb2):
 				want.append(fb2)
 				break
+	_hat_mi = null
 	for key: String in names:
 		var mi: MeshInstance3D = names[key]
 		mi.visible = want.has(key)
+		if mi.visible and key.begins_with("hat_"):
+			_hat_mi = mi
+
+
+## Knocks the hat off. The skinned hat is hidden and Fx gets what it needs to fling a loose copy:
+## {mesh, material, xf (puts the mesh where the hat sat), colour}. Returns {} when there is no hat left to lose.
+func shed_hat() -> Dictionary:
+	if _hat_mi == null or not _hat_mi.visible or rider_skel == null or not is_inside_tree():
+		return {}
+	var head := rider_skel.find_bone("head")
+	if head < 0:
+		return {}
+	_hat_mi.visible = false
+	rider.hat_off = true
+	# Riders who wear a hat have no hair mesh, and nobody came to this race bald.
+	var has_hair := false
+	for mi in rider_meshes:
+		has_hair = has_hair or (mi.visible and String(mi.name).begins_with("hair_"))
+	if not has_hair:
+		var woman := str(rider.wardrobe).contains("head_woman")
+		for mi in rider_meshes:
+			if String(mi.name) == ("hair_plaits" if woman else "hair_short"):
+				mi.visible = true
+	var xf :=rider_skel.global_transform * rider_skel.get_bone_global_pose(head) * rider_skel.get_bone_global_rest(head).affine_inverse()
+	return {"mesh": _hat_mi.mesh, "material": _hat_mi.material_override, "xf": xf, "colour": rider.colour_b}
 
 
 func _make_weapon_attachments() -> void:
@@ -235,6 +281,13 @@ func _refresh_weapons() -> void:
 		shield_node = holder3
 
 
+## Where a shot leaves from: the bow in the left hand, the sling or spear in the right, wherever the animation has put them.
+func shot_point() -> Vector3:
+	if ranged_node != null and is_instance_valid(ranged_node) and ranged_node.is_inside_tree():
+		return ranged_node.global_position
+	return rider.hand_point(track)
+
+
 func _attach_rider(on_horse: bool) -> void:
 	if rider_root == null:
 		return
@@ -291,7 +344,7 @@ func sync(dt: float) -> void:
 	tf.basis = tf.basis * Basis(Vector3.UP, yaw) * Basis(Vector3(0, 0, 1), roll)
 	transform = tf
 	# --- animations ---
-	_update_horse_anim()
+	_update_horse_anim(dt)
 	_update_rider_anim(dt)
 	# --- detached rider body ---
 	if _detached:
@@ -391,21 +444,174 @@ func _play_horse(name: String, blend: float, speed_scale: float) -> void:
 	horse_ap.speed_scale = speed_scale
 
 
-func _update_horse_anim() -> void:
+## What a gait loop carries the horse, read from its animation tracks: the backward speed of a hoof, relative to the body,
+## while it is on the ground, averaged over the four hooves ("ref", m/s at speed_scale 1: the ground speed at which the
+## feet would not skate), plus the lowest height any hoof reaches ("low"). Walks the skeleton by hand, so it needs no frames.
+static func stride_ref(skel: Skeleton3D, an: Animation) -> Dictionary:
+	var steps := 120
+	var rot := {}
+	var pos := {}
+	for t in an.get_track_count():
+		var bone := skel.find_bone(String(an.track_get_path(t)).get_slice(":", 1))
+		if bone < 0:
+			continue
+		if an.track_get_type(t) == Animation.TYPE_ROTATION_3D:
+			rot[bone] = t
+		elif an.track_get_type(t) == Animation.TYPE_POSITION_3D:
+			pos[bone] = t
+	var hoofs: Array[int] = []
+	for h: String in HOOFS:
+		hoofs.append(skel.find_bone(h))
+	if hoofs.has(-1) or rot.is_empty():
+		return {"ref": 0.0, "low": 0.0, "stance": 0.0, "hoofs": []}
+	var ys: Array = []
+	var zs: Array = []
+	for k in hoofs.size():
+		ys.append([])
+		zs.append([])
+	for i in steps + 1:
+		var time := an.length * float(i) / float(steps)
+		var world: Array[Transform3D] = []
+		world.resize(skel.get_bone_count())
+		for b in skel.get_bone_count():
+			var rest := skel.get_bone_rest(b)
+			var q := rest.basis.get_rotation_quaternion()
+			var p := rest.origin
+			if rot.has(b):
+				q = an.rotation_track_interpolate(rot[b], time)
+			if pos.has(b):
+				p = an.position_track_interpolate(pos[b], time)
+			var local := Transform3D(Basis(q), p)
+			var parent := skel.get_bone_parent(b)
+			world[b] = local if parent < 0 else world[parent] * local
+		for k in hoofs.size():
+			ys[k].append(world[hoofs[k]].origin.y)
+			zs[k].append(-world[hoofs[k]].origin.z)
+	var dt := an.length / float(steps)
+	var speeds: Array[float] = []
+	var stance := 0.0
+	var low := 1.0e9
+	for k in hoofs.size():
+		var y_arr: Array = ys[k]
+		var z_arr: Array = zs[k]
+		var lo: float = y_arr.min()
+		var hi: float = y_arr.max()
+		low = minf(low, lo)
+		var limit := lo + 0.18 * (hi - lo) + 0.01
+		var n := 0
+		var travel := 0.0
+		for i in steps:
+			var back: float = float(z_arr[i]) - float(z_arr[i + 1])
+			if float(y_arr[i]) < limit and float(y_arr[i + 1]) < limit and back > 0.0:
+				n += 1
+				travel += back
+		speeds.append(travel / maxf(float(n) * dt, 0.0001))
+		stance += float(n) / float(steps)
+	var mean := 0.0
+	for v in speeds:
+		mean += v
+	return {"ref": mean / float(speeds.size()), "low": low, "stance": stance / float(hoofs.size()), "hoofs": speeds}
+
+
+## Stretches the swing of the legs in a loop by k, about each bone's mean pose, so the feet stroke k times as far.
+static func stretch_swing(an: Animation, k: float) -> void:
+	for t in an.get_track_count():
+		if an.track_get_type(t) != Animation.TYPE_ROTATION_3D:
+			continue
+		if not String(an.track_get_path(t)).get_slice(":", 1) in SWING_BONES:
+			continue
+		var n := an.track_get_key_count(t)
+		var first: Quaternion = an.track_get_key_value(t, 0)
+		var sum := Vector4.ZERO
+		for i in n:
+			var q: Quaternion = an.track_get_key_value(t, i)
+			sum += Vector4(q.x, q.y, q.z, q.w) * (1.0 if q.dot(first) >= 0.0 else -1.0)
+		var mean := Quaternion(sum.x, sum.y, sum.z, sum.w).normalized()
+		for i in n:
+			var q: Quaternion = an.track_get_key_value(t, i)
+			if q.dot(mean) < 0.0:
+				q = -q
+			var delta := (mean.inverse() * q).normalized()
+			var ang := delta.get_angle()
+			var axis := Vector3(delta.x, delta.y, delta.z).normalized() if ang > 0.0001 else Vector3.UP
+			an.track_set_key_value(t, i, mean * Quaternion(axis, ang * k))
+
+
+## Closes the gap between how far the gait loops carry the horse and how fast the ground goes by: each loop's swing is
+## stretched (once; the animations are shared by every horse) until the hooves keep up with GAIT_GRIP of a typical ground
+## speed at the cadence they play at, up to SWING_K_MAX. A loop that already strides far enough is left alone.
+static func lengthen_strides(ap: AnimationPlayer, skel: Skeleton3D) -> void:
+	for g: String in GAIT_HZ:
+		if not ap.has_animation(g):
+			continue
+		var an := ap.get_animation(g)
+		if an.has_meta("swing_k"):
+			continue
+		var ref := float(stride_ref(skel, an)["ref"])
+		var hz: Vector2 = GAIT_HZ[g]
+		var foot := ref * 0.5 * (hz.x + hz.y) * an.length
+		var k := 1.0
+		if ref > 0.05:
+			k = clampf(GAIT_GRIP * float(GAIT_TYPICAL[g]) / maxf(foot, 0.01), 1.0, SWING_K_MAX)
+		an.set_meta("swing_k", k)
+		if k > 1.02:
+			stretch_swing(an, k)
+
+
+## Cycles a second for a gait loop at this ground speed: slow end of the band to fast end, so a quicker horse
+## visibly works harder inside a gait and the loop never runs faster than a horse's legs could read.
+## top is the horse's top speed (the gait bands are fractions of it, as in Rider.gait).
+static func cadence(g: String, hs: float, top: float) -> float:
+	var walk_top := maxf(0.12 * top, 2.5)
+	var band := Vector2.ZERO
+	match g:
+		"walk":
+			band = Vector2(0.6, walk_top)
+		"trot":
+			band = Vector2(walk_top, 0.4 * top)
+		"canter":
+			band = Vector2(0.4 * top, 0.74 * top)
+		_:
+			band = Vector2(0.74 * top, 1.18 * top)
+	var hz: Vector2 = GAIT_HZ[g]
+	return lerpf(hz.x, hz.y, clampf((hs - band.x) / maxf(band.y - band.x, 0.5), 0.0, 1.0))
+
+
+func _update_horse_anim(dt: float) -> void:
 	if horse_ap == null:
 		return
 	var st := rider.state
 	if st == "airborne":
 		_play_horse("leap", 0.1, 0.7)
+		_horse_gait_name = "leap"
 		return
 	if st == "falling":
 		_play_horse("stumble", 0.05, 1.0)
+		_horse_gait_name = "stumble"
+		return
+	if st == "finished" and rider.place == 1 and not _reared and rider.horse_speed < 5.5 and horse_ap.has_animation("rear"):
+		_reared = true
+		_rear_left = horse_ap.get_animation("rear").length
+		horse_ap.get_animation("rear").loop_mode = Animation.LOOP_NONE
+	if _rear_left > 0.0:
+		_rear_left -= dt
+		_play_horse("rear", 0.15, 1.0)
+		_horse_gait_name = "rear"
 		return
 	var g := _horse_gait()
 	var scale := 1.0
-	if GAIT_REF.has(g):
-		scale = clampf(rider.horse_speed / float(GAIT_REF[g]), 0.5, 1.9)
+	if GAIT_HZ.has(g) and horse_ap.has_animation(g):
+		_horse_hz = cadence(g, rider.horse_speed, float(rider.horse["speed"]))
+		scale = _horse_hz * horse_ap.get_animation(g).length
+	_horse_gait_name = g
 	_play_horse(g, 0.18, scale)
+
+
+## The rider's ride loops are one gallop stride long, so at a canter or gallop they bob in step with the horse's legs.
+func _ride_scale(fallback: float) -> float:
+	if _horse_gait_name == "gallop" or _horse_gait_name == "canter":
+		return _horse_hz * RIDE_LOOP
+	return fallback
 
 
 func _play_rider(name: String, blend: float, speed_scale: float = 1.0) -> void:
@@ -462,13 +668,16 @@ func _update_rider_anim(dt: float) -> void:
 			elif rider.shake >= Rider.WOBBLE_AT:
 				_play_rider("wobble", 0.12, 0.8 + rider.wobble_amount * 0.7)
 			elif rider.whip_on:
-				_play_rider("ride_whip", 0.1, clampf(rider.speed / 20.0, 0.7, 1.5))
+				_play_rider("ride_whip", 0.1, _ride_scale(clampf(rider.speed / 20.0, 0.7, 1.5)))
 			elif rider.speed < 9.0:
 				_play_rider("ride_slow", 0.15, clampf(rider.speed / 6.0, 0.6, 1.4))
 			else:
-				_play_rider("ride", 0.15, clampf(rider.speed / 18.0, 0.8, 1.6))
+				_play_rider("ride", 0.15, _ride_scale(clampf(rider.speed / 18.0, 0.8, 1.6)))
 		"finished":
-			_play_rider("victory", 0.2)
+			if rider.place <= 3:
+				_play_rider("victory", 0.2)
+			else:
+				_play_rider("ride_slow", 0.4, 0.45)
 		"falling":
 			_play_rider("tumble", 0.04, 0.53 / 0.9)
 		"down":
@@ -485,15 +694,20 @@ func _update_rider_anim(dt: float) -> void:
 			_play_rider("run", 0.1, clampf(1.0 + 0.0, 0.8, 1.4))
 		"mount":
 			_play_rider("mount", 0.05, 1.0)
-	# lean forward to scoop a scarf
+	# lean forward to scoop a scarf, or slump in the saddle after a finish outside the top three
 	if rider_root != null and not _detached:
 		if rider.scooping_t > 0.0:
 			_scoop = lerpf(_scoop, 1.0, 1.0 - exp(-dt / 0.05))
 		else:
 			_scoop = lerpf(_scoop, 0.0, 1.0 - exp(-dt / 0.12))
+		_slump = lerpf(_slump, 1.0 if (st == "finished" and rider.place > 3) else 0.0, 1.0 - exp(-dt / 0.7))
 		if st == "ride":
 			rider_root.rotation = Vector3(0.0, 0.0, -rider.scoop_side * _scoop * 0.6)
+		elif _slump > 0.01:
+			var pitch := Basis(Vector3.RIGHT, -0.42 * _slump)
+			var hips := Vector3(0.0, 0.92, 0.0)
+			rider_root.transform = Transform3D(pitch, Vector3(0.0, -0.9, 0.0) + hips - pitch * hips)
 		else:
-			rider_root.rotation = Vector3.ZERO
+			rider_root.transform = Transform3D(Basis.IDENTITY, Vector3(0.0, -0.9, 0.0))
 	if st == "ride" or st == "airborne":
 		rider.scooping_t = maxf(0.0, rider.scooping_t - dt)

@@ -28,6 +28,7 @@ var gap_target := 0.0
 var fight_line := 0.0
 var engaged := false
 var blocked := false
+var dodging := false
 var quiet_hands := false
 var leap_s := -1.0
 var leap_d := 0.0
@@ -58,7 +59,7 @@ func _init(p_rider: Rider, p_race: Race, p_rng: RandomNumberGenerator) -> void:
 	if race != null and race.grudges.has(r.rival_id):
 		var g: Variant = race.grudges[r.rival_id]
 		grudge = bool(g) if typeof(g) == TYPE_BOOL else int(g) > 0
-	season_mult = 0.965 + 0.025 * float(race.season)
+	season_mult = 0.955 + 0.03 * float(race.season)
 	if r.is_player:
 		season_mult = 1.0
 
@@ -162,6 +163,13 @@ func _decide() -> void:
 			best_c = c
 	line_d = best_c
 	blocked = best_score > 30.0
+	# something hard dead ahead on this line: time to get out of the way, whoever is alongside
+	dodging = false
+	for o in obs:
+		var ahead := float(o["s"]) - r.s
+		if not o.get("want", false) and not o.get("soft", false) and o["kind"] != "log" and ahead > 0.0 and ahead < spd * 1.7 and absf(r.d - float(o["d"])) < float(o["r"]) + 1.0:
+			dodging = true
+			break
 	# the nearest log ahead: leap it if we are over it when we get there
 	for o in obs:
 		var okind: String = o["kind"]
@@ -356,15 +364,19 @@ func _lane_penalty(c: float, obs: Array[Dictionary], can_leap: bool) -> float:
 	return p
 
 
+## Riders keep out from right behind a horse they'd run into, but further back a rider with any sense tucks into its wind trail.
 func _rider_penalty(c: float) -> float:
 	var p := 0.0
+	var trail := 0.0
 	for o in race.riders:
 		if o == r or not o.is_riding():
 			continue
 		var ds := o.s - r.s
 		if ds > 0.0 and ds < 13.0 and absf(c - o.d) < 1.7 and o != target:
 			p += 3.0 * (1.0 - ds / 13.0) + 0.5
-	return p
+		elif ds >= 13.0 and ds < Race.DRAFT_RANGE and absf(c - o.d) < 1.7:
+			trail = maxf(trail, 1.0 - ds / Race.DRAFT_RANGE)
+	return p - trail * (0.3 + r.skill)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -386,7 +398,7 @@ func _act(dt: float) -> void:
 	ram_t -= dt
 	if ram:
 		steer = signf(target.d - r.d)
-	else:
+	elif not dodging:
 		for o in race.riders:
 			if o == r or not o.is_riding():
 				continue
@@ -469,7 +481,7 @@ func _melee(dt: float) -> void:
 		var dist := sqrt(dx * dx + ds * ds)
 		if dist > reach * 0.93:
 			continue
-		var wanted := (o == target) or jab_ok
+		var wanted := (o == target) or jab_ok or (o == r.shoved and r.shoved_t > 0.0)
 		if not wanted:
 			continue
 		if dist < best_dist:

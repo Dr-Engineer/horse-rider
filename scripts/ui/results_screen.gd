@@ -1,12 +1,14 @@
 class_name ResultsScreen
 extends Screen
-## Places, prize, bounties, whether you qualified, a word from a rival, and a white scarf for the winner.
+## Places, prize, bounties, the side bet, whether you qualified, a word from a rival, and a white scarf for the winner.
 
 var _r: Dictionary = {}
 var _board: Control
 var _shown := 0
 var _clock := 0.0
 var _ledger := 0
+var _ledger_rows := 4
+var _spoke := false
 var _continue: WButton
 var _stamp_t := -1.0
 
@@ -19,6 +21,7 @@ func build() -> void:
 	_r = Game.last_result
 	if bool(_r.get("loan", false)):
 		Game.loan_notice = false   # the ledger tells you, so the league need not
+	_ledger_rows = _ledger_lines().size()
 	_board = Control.new()
 	_board.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -55,6 +58,32 @@ func _enable() -> void:
 	_continue.grab_focus()
 
 
+## The money lines, in the order they are read out: [label, signed amount].
+func _ledger_lines() -> Array:
+	if _r.is_empty():
+		return []
+	var lines: Array = [
+		["PRIZE %s" % UI.ordinal(int(_r.place)) if int(_r.prize) > 0 else "NO PRIZE", int(_r.prize)],
+		["KNOCKDOWNS X%d" % int(_r.knockdowns), int(_r.bounty)],
+		["SCARVES AND BONUSES", int(_r.scoops)],
+		["STEWARD FINES", -int(_r.fine)],
+	]
+	var stake := int(_r.get("wager", 0))
+	if stake > 0:
+		lines.append(["BET VS %s" % str(_r.get("wager_rival", "")).to_upper(), stake if bool(_r.get("wager_won", false)) else -stake])
+	return lines
+
+
+## The fun numbers from the race, only the ones that happened: [label, count].
+func _stat_items() -> Array:
+	var items: Array = []
+	for pair: Array in [["hats", "HATS KNOCKED OFF"], ["near_misses", "NEAR MISSES"], ["overtakes", "OVERTAKES"], ["best_streak", "BEST STREAK"]]:
+		var v := int(_r.get(pair[0], 0))
+		if v > 0:
+			items.append([pair[1], v])
+	return items
+
+
 func _process(delta: float) -> void:
 	if _r.is_empty():
 		return
@@ -68,11 +97,15 @@ func _process(delta: float) -> void:
 		if _shown == n:
 			var good := int(_r.get("place", 9)) <= 3
 			Sfx.play("jingle_win" if good else "jingle_lose", -3.0)
-	elif _shown >= n and _ledger < 6 and _clock > 0.35 + 0.16 * n + 0.4 + 0.22 * _ledger:
+	elif _shown >= n and _ledger < _ledger_rows + 2 and _clock > 0.35 + 0.16 * n + 0.4 + 0.22 * _ledger:
 		_ledger += 1
-		Sfx.play("coin" if _ledger < 5 else "bell", -6.0)
+		Sfx.play("coin" if _ledger <= _ledger_rows else "bell", -6.0)
 		_board.queue_redraw()
-		if _ledger == 6:
+		if _ledger == _ledger_rows + 1 and not _spoke:
+			_spoke = true
+			var rl: Dictionary = _r.get("rival_line", {})
+			Speak.text(str(rl.get("id", "")), str(rl.get("line", "")))
+		if _ledger == _ledger_rows + 2:
 			_stamp_t = 0.0
 			_enable()
 	if _stamp_t >= 0.0:
@@ -83,6 +116,10 @@ func _process(delta: float) -> void:
 func _row_name(s: String) -> String:
 	var n := s.to_upper()
 	return n if n.length() <= 22 else n.substr(0, 22)
+
+
+func _signed(v: int) -> String:
+	return "+%d" % v if v >= 0 else "%d" % v
 
 
 func _paint() -> void:
@@ -100,6 +137,8 @@ func _paint() -> void:
 	var panel := Rect2(10, 52, 366, 20 + n * 17 + 12)
 	UI.draw_panel(c, panel, true)
 	var y0 := panel.position.y + 14
+	var bet_id := str(_r.get("wager_rival", ""))
+	var coin := UI.icon("coin")
 	for i in n:
 		var row: Dictionary = rows[i]
 		if i < n - _shown:
@@ -114,30 +153,39 @@ func _paint() -> void:
 			var scarf := UI.icon("scarf")
 			if scarf != null:
 				c.draw_texture(scarf, Vector2(panel.position.x + 46, y - 4))
-		UI.text(c, Vector2(panel.position.x + 66, y), _row_name(str(row["name"])), 1, tc, false)
+		var nm := _row_name(str(row["name"]))
+		UI.text(c, Vector2(panel.position.x + 66, y), nm, 1, tc, false)
+		if bet_id != "" and str(row["rival_id"]) == bet_id and coin != null:
+			c.draw_texture(coin, Vector2(panel.position.x + 66 + UI.text_width(nm) + 6, y - 3))
 		var tt := UI.time_text(float(row["time"]))
 		UI.text_r(c, panel.end.x - 14, y, tt, 1, tc if is_me else UI.BONE, false)
 
+	# the fun numbers, once the ledger is under way
+	var stats := _stat_items()
+	if not stats.is_empty() and _ledger >= 2:
+		var sh := 12 + ceili(stats.size() / 2.0) * 13
+		var sr := Rect2(10, panel.end.y + 6, 366, sh)
+		UI.draw_panel(c, sr, false)
+		for i in stats.size():
+			var cx := sr.position.x + 12 + (i % 2) * 176.0
+			var cy := sr.position.y + 7 + floorf(i / 2.0) * 13.0
+			UI.text(c, Vector2(cx, cy), str(stats[i][0]), 1, UI.BONE, false)
+			UI.text_r(c, cx + 158, cy, "%d" % int(stats[i][1]), 1, UI.ORPIMENT, false)
+
 	# ledger
+	var lines := _ledger_lines()
 	var lr := Rect2(388, 52, 242, 156)
 	UI.draw_panel(c, lr, true)
-	var lines: Array = [
-		["PRIZE %s" % UI.ordinal(int(_r.place)) if int(_r.prize) > 0 else "NO PRIZE", "+%d" % int(_r.prize)],
-		["KNOCKDOWNS X%d" % int(_r.knockdowns), "+%d" % int(_r.bounty)],
-		["SCARVES AND BONUSES", "+%d" % int(_r.scoops)],
-		["STEWARD FINES", "-%d" % int(_r.fine)],
-	]
 	var ly := lr.position.y + 15
 	for i in lines.size():
 		if _ledger > i:
+			var amount := int(lines[i][1])
+			var ac := UI.MALACHITE.lightened(0.3) if amount > 0 else (UI.ROSE if amount < 0 else UI.ASH)
 			UI.text(c, Vector2(lr.position.x + 12, ly), str(lines[i][0]), 1, UI.CONCH, false)
-			UI.text_r(c, lr.end.x - 14, ly, str(lines[i][1]), 1, UI.MALACHITE.lightened(0.3) if not str(lines[i][1]).begins_with("-") else UI.ROSE, false)
-		ly += 15.0
-	if _ledger > 4:
+			UI.text_r(c, lr.end.x - 14, ly, _signed(amount), 1, ac, false)
+		ly += 14.0
+	if _ledger > lines.size():
 		c.draw_rect(Rect2(lr.position.x + 12, ly - 2, lr.size.x - 24, 1), UI.GOLD)
-		var gain := int(_r.money_after) - int(_r.money_before)
-		if bool(_r.get("loan", false)):
-			gain -= Game.LOAN_AMOUNT
 		UI.text(c, Vector2(lr.position.x + 12, ly + 4), "YOU NOW HAVE", 1, UI.BONE, false)
 		UI.text_r(c, lr.end.x - 14, ly + 4, UI.srang(int(_r.money_after)), 1, UI.ORPIMENT, false)
 		ly += 17.0
@@ -145,7 +193,7 @@ func _paint() -> void:
 			UI.text(c, Vector2(lr.position.x + 12, ly + 2), "AMA CHOEKYI LENT YOU %d." % Game.LOAN_AMOUNT, 1, UI.ROSE, false)
 
 	# the stamp
-	if _ledger >= 6:
+	if _ledger >= lines.size() + 2:
 		var ok: bool = _r.qualified
 		var word := "QUALIFIED" if ok else "NOT QUALIFIED"
 		var col := UI.MALACHITE.lightened(0.2) if ok else UI.VERMILION
@@ -167,12 +215,11 @@ func _paint() -> void:
 
 	# a word from a rival
 	var rl: Dictionary = _r.get("rival_line", {})
-	if _ledger >= 5 and str(rl.get("line", "")) != "":
-		var qb := Rect2(10, 322 - 20, 392, 50)
-		UI.text(c, Vector2(14, 268), str(rl.get("name", "")), 1, UI.ORPIMENT)
+	if _ledger > lines.size() and str(rl.get("line", "")) != "":
+		UI.text(c, Vector2(14, 272), str(rl.get("name", "")), 1, UI.ORPIMENT)
 		var words := ("\"%s\"" % str(rl.line)).split(" ")
 		var line := ""
-		var yy := 282.0
+		var yy := 286.0
 		for w2 in words:
 			var test: String = w2 if line == "" else line + " " + w2
 			if UI.text_width(test) > 372.0:

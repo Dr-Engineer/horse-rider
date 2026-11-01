@@ -11,10 +11,35 @@ signal rider_remounted(rider: Rider)
 signal announcement(text: String, kind: String)
 ## Extra signals for FX and audio (not in INTERFACES, additive).
 signal rider_event(kind: String, rider: Rider, info: Dictionary)
+## Someone speaks. line is what Sfx.say returned plus "speaker"; rider is null for the starter and the stewards.
+signal chatter(rider: Rider, line: Dictionary)
 
 const GRID_ROWS := 4
 const MAX_RACE_TIME := 420.0
 const AFTER_PLAYER_FINISH := 7.0
+## With visuals the starter gets time to call the riders before the numbers; the headless sim keeps its 3.6 s.
+const COUNTDOWN_HEADLESS := 3.6
+const COUNTDOWN_SHOWN := 5.0
+const HAT_SILVER := 3
+const DRAFT_RANGE := 55.0       # how far back a horse's wind trail reaches
+const DRAFT_WIDTH_NEAR := 1.8   # half width of the trail just behind the horse
+const DRAFT_WIDTH_FAR := 3.0    # and at its far end
+const RIDER_LOW := 1.1          # a shot hits a rider between these heights above the ground: the saddle up to the hat.
+const RIDER_HIGH := 2.8         # Below that it's the horse, and horses are never hurt, so it flies on.
+const RIDER_HEAD := 2.2         # above this it's the head
+const RIDER_HIT_RADIUS := 0.85
+const MAX_STUCK := 14           # arrows left standing in the ground
+const SIGHT_RANGE := 110.0      # how far along the sight a shot is taken to be going if it meets nothing
+const KICK_PUSH := 13.5         # sideways speed a kick gives its target, which fades over Rider.SLIDE_TIME: a shove of over 6 m
+const SPEAR_CLOSE := 2.0        # nearer than this a spear has no room to work,
+const SPEAR_CLOSE_DAMAGE := 1.0 / 3.0   # and does this share of its damage
+const SLAM_SPEED := 4.5         # a slam takes this much sideways speed toward the other rider,
+const SLAM_EDGE := 3.0          # and this much more sideways momentum than they have (speed times the horse's bulk)
+const SLAM_DAMAGE := 1.5        # a strike lands this much harder
+const STRIKE_SPEED := 6.5       # with nearly all the sideways speed a horse has, going toward the target,
+const STRIKE_EDGE := 5.5        # who has next to none of their own,
+const SLAM_WINDOW := 0.8        # or for this long after a slam as hard as that
+const SLAM_BOUNCE := 0.25       # how much two horses that slam together spring apart: 0 goes on as one, 1 bounces right off
 
 var riders: Array[Rider] = []
 var player: Rider
@@ -32,6 +57,7 @@ var player_ai := false       # player slot driven by AI (sim and autoplay)
 var season := 0
 var grudges: Dictionary = {}
 var hazards: Hazards
+var roadside: Roadside
 var rng := RandomNumberGenerator.new()
 var race_time := 0.0
 var finish_s := 0.0
@@ -43,12 +69,20 @@ var visuals: Dictionary = {}
 var fx: Node = null
 var cam_rig: Node = null
 var hud: Node = null
+## Visuals-only helpers (Chatter, Flair, Life), never created when headless.
+var chatter_node: Node = null
+var flair: Node = null
+var life: Node = null
+var terrain: Object = null          # the TrackBuilder, for ground heights off the road
+var road_material: ShaderMaterial = null
 var config: Dictionary = {}
 var finish_order: Array[Rider] = []
 var results: Array = []
 var stats := {}
 var violations: Array[String] = []
 var world: Node3D = null
+var aim_screen := Vector2(0.5, 0.4)  # where the player's sight is, as a fraction of the screen
+var aim_held := false                # a test is moving the sight itself
 
 var _began := false
 var _end_timer := -1.0
@@ -58,6 +92,7 @@ var _was_drawing: Dictionary = {}
 var _was_mud: Dictionary = {}
 var _was_quiet := false
 var _proj_nodes: Node3D = null
+var _stuck: Array[Dictionary] = []
 
 
 func _ready() -> void:
@@ -79,13 +114,18 @@ func _process(delta: float) -> void:
 		v.call("sync", delta)
 	if hazards != null:
 		hazards.update_visuals()
-	_update_projectile_visuals()
+	if roadside != null:
+		roadside.update_visuals(delta)
+	_update_projectile_visuals(delta)
+	var ctrl: Variant = controllers.get(player)
+	if ctrl is PlayerControl and not paused_for_ui:
+		(ctrl as PlayerControl).move_sight(delta)
 	if not ended:
 		var pr := player
 		if pr != null:
 			Sfx.set_gallop(clampf(pr.speed / maxf(float(pr.horse["speed"]), 1.0), 0.0, 1.0) if pr.is_riding() else 0.0)
 			var crowd := 0.65 if int(config.get("course_index", 0)) >= 3 else 0.2
-			Sfx.set_ambience(clampf(pr.speed / 30.0, 0.0, 1.0), crowd)
+			Sfx.set_ambience(clampf(pr.speed / 30.0 + pr.draft * 0.3, 0.0, 1.0), crowd)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -119,14 +159,17 @@ func begin(cfg: Dictionary) -> void:
 		"crash_by_klass": {}, "thrown": {}, "kinds": {}, "max_ranged_shake": 0.0, "swings": 0, "shots": 0, "snatched": 0, "dropped": 0,
 	}
 	_build_riders(cfg)
-	countdown = 3.6
+	countdown = COUNTDOWN_HEADLESS if headless else COUNTDOWN_SHOWN
 	_last_count = 99
 	race_time = 0.0
 	started = false
 	ended = false
 	_end_timer = -1.0
+	roadside = Roadside.new()
+	roadside.setup(self, course.get("events", []))
 	if not headless:
 		_build_visuals()
+	roadside.settle()
 	_began = true
 	if not headless and is_inside_tree():
 		announcement.emit("READY", "info")
@@ -138,6 +181,9 @@ func _apply_pause(on: bool) -> void:
 		(visuals[r] as Node).process_mode = mode
 	if fx != null:
 		fx.process_mode = mode
+	for helper: Node in [chatter_node, flair, life]:
+		if helper != null:
+			helper.process_mode = mode
 	if cam_rig != null:
 		if on:
 			cam_rig.call("reset_time")
@@ -152,6 +198,8 @@ func _clear_refs() -> void:
 	for r in riders:
 		r.last_hitter = null
 		r.target_lock = null
+		r.draft_from = null
+		r.shoved = null
 
 
 func _teardown() -> void:
@@ -168,8 +216,15 @@ func _teardown() -> void:
 	fx = null
 	cam_rig = null
 	hud = null
+	chatter_node = null
+	flair = null
+	life = null
+	terrain = null
+	road_material = null
 	world = null
 	_barge_cd.clear()
+	_was_mud.clear()
+	_stuck.clear()
 	player = null
 
 
@@ -290,7 +345,7 @@ func _build_riders(cfg: Dictionary) -> void:
 		r.landed.connect(_on_landed)
 		riders.append(r)
 		if r.is_player and not player_ai:
-			controllers[r] = PlayerControl.new()
+			controllers[r] = PlayerControl.new(r, self)
 		else:
 			controllers[r] = RiderAI.new(r, self, rng)
 	_update_places()
@@ -324,16 +379,19 @@ func _build_visuals() -> void:
 	var road := ShaderMaterial.new()
 	road.shader = load("res://shaders/road.gdshader")
 	road.set_shader_parameter("tile", _road_tile(int(config.get("course_index", 0))))
+	road_material = road
 	var tb_script: GDScript = load("res://scripts/race/track_builder.gd")
 	if tb_script != null and tb_script.can_instantiate():
 		var builder: Object = tb_script.new(track, course["biome"])
 		builder.call("build_into", world, ground, road)
+		terrain = builder
 	if ResourceLoader.exists("res://scripts/race/track_dressing.gd"):
 		var td_script: GDScript = load("res://scripts/race/track_dressing.gd")
 		if td_script != null and td_script.can_instantiate():
 			var td: Object = td_script.new(track, course, rng)
 			td.call("build_into", world)
 	hazards.build_visuals(world)
+	roadside.build_visuals(world)
 	_proj_nodes = Node3D.new()
 	_proj_nodes.name = "Projectiles"
 	add_child(_proj_nodes)
@@ -358,6 +416,23 @@ func _build_visuals() -> void:
 		hud.name = "HUD"
 		add_child(hud)
 		hud.call("bind", self)
+	chatter_node = _make_helper("res://scripts/race/chatter.gd", "Chatter")
+	flair = _make_helper("res://scripts/race/flair.gd", "Flair")
+	life = _make_helper("res://scripts/race/life.gd", "Life")
+
+
+## One of the visuals-only helpers (Chatter, Flair, Life): loaded by path so a broken file can't stop the race.
+func _make_helper(path: String, node_name: String) -> Node:
+	if not ResourceLoader.exists(path):
+		return null
+	var script: GDScript = load(path)
+	if script == null or not script.can_instantiate():
+		return null
+	var n: Node = script.new()
+	n.name = node_name
+	add_child(n)
+	n.call("bind", self)
+	return n
 
 
 func _road_tile(index: int) -> Texture2D:
@@ -429,6 +504,7 @@ func step(dt: float) -> void:
 		prev_s[r] = r.s
 		r.simulate(dt, intent, track)
 	hazards.update(dt, riders)
+	roadside.update(dt)
 	for r in riders:
 		hazards.check_rider(r, prev_s[r])
 	_update_draft(dt)
@@ -439,10 +515,13 @@ func step(dt: float) -> void:
 		_was_quiet = player.in_quiet
 	if not headless:
 		for r in riders:
-			if r.mud and not _was_mud.get(r, false) and (r.is_player or absf(r.s - player.s) < 25.0):
-				Sfx.play_at("splash", visual_pos(r), 0.0 if r.is_player else -6.0)
+			if r.mud and not _was_mud.get(r, false):
+				rider_event.emit("mud", r, {})
+				if r.is_player or absf(r.s - player.s) < 25.0:
+					Sfx.play_at("splash", visual_pos(r), 0.0 if r.is_player else -6.0)
 			_was_mud[r] = r.mud
 	_combat_step(dt)
+	_spread_finished(dt)
 	_check_finish()
 	_update_places()
 	_watch_shake()
@@ -460,22 +539,49 @@ func _countdown_events(prev: float) -> void:
 		_last_count = n
 		Sfx.play("drum_hit", 0.0, 1.0 - 0.08 * float(3 - n))
 		announcement.emit(str(n), "big")
+		if not headless:
+			rider_event.emit("count", null, {"n": n})
 	elif countdown <= 0.0 and prev > 0.0:
 		pass
 
 
-## Slipstream: close behind another rider in the same lane gives a little speed.
+## Riders who have crossed the line drift apart, so nobody ends up standing inside a rival (the finish camera circles them).
+## Finished riders take no part in anything else, so this changes no result.
+func _spread_finished(dt: float) -> void:
+	for i in finish_order.size():
+		var a := finish_order[i]
+		for j in range(i + 1, finish_order.size()):
+			var b := finish_order[j]
+			var gap := b.d - a.d
+			if absf(a.s - b.s) < 2.8 and absf(gap) < 1.5:
+				var dir := signf(gap) if absf(gap) > 0.02 else (1.0 if a.slot < b.slot else -1.0)
+				var push := (1.5 - absf(gap)) * 3.0 * dt
+				a.d -= dir * push * 0.5
+				b.d += dir * push * 0.5
+
+
+## The wind trail. A horse at speed leaves stiller air behind it, and whoever rides in that air has less to push through,
+## which is how a rider who has fallen back gets back in touch. The trail is strongest close behind, fades out over
+## DRAFT_RANGE metres, and spreads a little as it thins. A slow horse leaves less of one.
 func _update_draft(dt: float) -> void:
 	for r in riders:
 		var want := 0.0
+		var from: Rider = null
 		if r.is_riding() and r.speed > 8.0:
 			for o in riders:
-				if o == r or not o.is_riding():
+				if o == r or not o.is_riding() or o.speed < 8.0:
 					continue
 				var ds := o.s - r.s
-				if ds > 1.5 and ds < 14.0 and absf(o.d - r.d) < 1.7:
-					want = maxf(want, 1.0 - ds / 14.0)
+				if ds < 1.5 or ds > DRAFT_RANGE:
+					continue
+				var far := ds / DRAFT_RANGE
+				var width := lerpf(DRAFT_WIDTH_NEAR, DRAFT_WIDTH_FAR, far)
+				var strength := pow(1.0 - far, 0.8) * (1.0 - smoothstep(width * 0.6, width, absf(o.d - r.d))) * clampf(o.speed / 16.0, 0.0, 1.0)
+				if strength > want:
+					want = strength
+					from = o
 		r.draft = lerpf(r.draft, want, 1.0 - exp(-dt / 0.35))
+		r.draft_from = from
 
 
 func _watch_shake() -> void:
@@ -573,7 +679,7 @@ func _combat_step(dt: float) -> void:
 		if r.swing_t >= 0.0 and r.swing_active() and not r.swing_done:
 			_resolve_swing(r)
 		if r.drawing:
-			r.target_lock = find_lock(r)
+			r.target_lock = null if controllers[r] is PlayerControl else find_lock(r)
 			if not _was_drawing.get(r, false) and not headless:
 				Sfx.play_at("bow_draw" if r.ranged_id == "bow" else "whoosh", visual_pos(r), 0.0 if r.is_player else -6.0)
 			_was_drawing[r] = true
@@ -628,28 +734,55 @@ func _resolve_swing(r: Rider) -> void:
 				rider_event.emit("steward_hit", r, {})
 				r.swing_done = true
 				return
+		# no one in reach: what's beside the road can be struck too, and a sheep in it
+		var side := r.swing_side if kind == "melee" else 0
+		if roadside.struck(r, reach, side):
+			r.swing_done = true
+		elif hazards.sheep_struck(r.s + minf(reach, 1.5), r.d + float(side) * reach * 0.6, reach):
+			roadside.fine_for_sheep(r, visual_pos(r))
+			r.swing_done = true
 		return
 	r.swing_done = true
 	var damage: float = w["damage"]
 	var impact: float = w["impact"]
-	if wid == "key" or wid == "spear":
-		if best_dist < 1.5:
-			damage *= 0.5
-		if wid == "spear" and r.speed >= 0.9 * float(r.horse["speed"]):
+	if wid == "key" and best_dist < 1.5:
+		damage *= 0.5
+	if wid == "spear":
+		if best_dist < SPEAR_CLOSE:
+			damage *= SPEAR_CLOSE_DAMAGE
+		if r.speed >= 0.9 * float(r.horse["speed"]):
 			impact *= 1.25
+	var slam := _slamming(r, best)
+	if slam:
+		damage *= SLAM_DAMAGE
+		stats["slam_strikes"] = int(stats.get("slam_strikes", 0)) + 1
 	var victim_side := -1 if best_dx > 0.0 else 1   # side of the victim the attacker stands on
 	var klass: String = w["klass"]
 	var mid_swing := best.swing_t >= 0.0
-	var info := apply_hit(r, best, damage, impact, klass, wid, victim_side)
+	var info := apply_hit(r, best, damage, impact, klass, wid, victim_side, slam)
 	if kind == "kick" and not info.get("parried", false):
-		best.lateral += signf(best_dx) * 8.5 * (r.bulk / maxf(best.bulk, 0.5))
-		best.speed = maxf(0.0, best.speed - 1.5)
+		var shove := signf(best_dx) * KICK_PUSH * clampf(r.bulk / maxf(best.bulk, 0.5), 0.75, 1.3) * (0.5 if info.get("blocked", false) else 1.0)
+		best.slide += shove
+		r.slide -= shove * 0.12    # kicking off someone pushes you back a little too
+		best.speed = maxf(0.0, best.speed - 1.0)
 	if mid_swing and not info.get("crashed", false) and best.weapon_id != "fists" and not info.get("blocked", false) and rng.randf() < 0.35:
 		_take_or_drop(r, best)
 
 
-func apply_hit(attacker: Rider, victim: Rider, damage: float, impact: float, klass: String, kind: String, side: int) -> Dictionary:
-	var info := {"damage": damage, "impact": impact, "klass": klass, "blocked": false, "parried": false, "side": side, "kind": kind, "crashed": false}
+## Whether this rider comes at the other with this much sideways speed and this much more sideways momentum than they have,
+## whichever way they're going: meeting someone coming just as hard, or chasing someone going just as fast, is neither.
+func _has_edge(r: Rider, other: Rider, speed: float, edge: float) -> bool:
+	var toward := r.side_speed() * signf(other.d - r.d)
+	return toward >= speed and r.bulk * toward - other.bulk * absf(other.side_speed()) >= edge
+
+
+## A strike lands harder only with a hard run at someone holding their line, or straight after slamming them that hard.
+func _slamming(r: Rider, target: Rider) -> bool:
+	return (r.shoved == target and r.shoved_t > 0.0) or _has_edge(r, target, STRIKE_SPEED, STRIKE_EDGE)
+
+
+func apply_hit(attacker: Rider, victim: Rider, damage: float, impact: float, klass: String, kind: String, side: int, slam := false) -> Dictionary:
+	var info := {"damage": damage, "impact": impact, "klass": klass, "blocked": false, "parried": false, "side": side, "kind": kind, "crashed": false, "slam": slam}
 	if not victim.is_riding() or victim.invuln_t > 0.0:
 		info["ignored"] = true
 		return info
@@ -677,8 +810,10 @@ func apply_hit(attacker: Rider, victim: Rider, damage: float, impact: float, kla
 	var dmg: float = info["damage"]
 	info["impact"] = imp
 	var res := victim.receive_hit(attacker, dmg, imp, klass, side)
-	if klass != "ranged" and not info["blocked"]:
+	if klass != "ranged" and kind != "fists" and not info["blocked"]:
 		victim.lateral += -float(side) * imp * 0.07
+	if slam and attacker.is_player and not res["ignored"]:
+		announcement.emit("SLAM!  x%.1f" % SLAM_DAMAGE, "good")
 	info["crashed"] = res["crashed"]
 	info["crash_reason"] = res["reason"]
 	attacker.hits_landed += 1
@@ -736,33 +871,22 @@ func _take_or_drop(attacker: Rider, victim: Rider) -> void:
 func _fire(r: Rider) -> void:
 	r.fire_pending = false
 	var w: Dictionary = GameData.WEAPONS[r.ranged_id]
-	var vm: float = w["speed"]
 	var p := Projectile.new()
 	p.shooter = r
 	p.weapon_id = r.ranged_id
 	p.kind = "arrow" if r.ranged_id == "bow" else ("stone" if r.ranged_id == "sling" else "spear")
-	p.s = r.s + 1.2
-	p.d = r.d + 0.3
-	var dir := Vector2(1.0, 0.0)
-	var tgt := r.target_lock
-	if tgt != null and tgt.is_riding():
-		dir = _lead(Vector2(tgt.s - r.s, tgt.d - r.d), Vector2(tgt.speed - r.speed, tgt.lateral - r.lateral), vm)
-	if tgt == null or not tgt.is_riding():
-		var pole := _pole_in_view(r, float(w["reach"]))
-		if not pole.is_empty():
-			dir = _lead(Vector2(float(pole["s"]) - r.s, float(pole["d"]) - r.d), Vector2(-r.speed, -r.lateral), vm)
-	var dist_m := Vector2(tgt.s - r.s, tgt.d - r.d).length() if tgt != null else 20.0
-	var err_deg := 2.5 + (1.0 - r.skill) * 8.0 + dist_m * 0.08
-	if r.is_player:
-		err_deg = 0.6 + dist_m * 0.02
-	dir = dir.rotated(deg_to_rad(rng.randfn(0.0, err_deg)))
-	p.vs = dir.x * vm + r.speed
-	p.vd = dir.y * vm + r.lateral
+	var hand := shot_point(r)
+	var own := r.world_velocity(track)
+	# a half-drawn bow or a half-swung sling throws slower, and so falls shorter
+	var muzzle := launch_speed(r.ranged_id, r.fire_power)
+	var dir := r.aim_dir
+	if dir == Vector3.ZERO:
+		dir = _rival_aim(r, hand, own, muzzle, float(w["reach"]))
+	p.launch(track, hand, r.s, dir * muzzle + own)
 	p.power = r.fire_power
 	var boost := 1.0 + 0.3 * r.fire_power if r.ranged_id == "bow" else 1.0
 	p.damage = float(w["damage"]) * boost
 	p.impact = float(w["impact"]) * boost
-	p.max_life = float(w["reach"]) / vm + 0.2
 	p.max_out = float(w["reach"])
 	if r.ranged_id == "roped_spear":
 		r.rope_out = true
@@ -776,12 +900,89 @@ func _fire(r: Rider) -> void:
 		Sfx.play_at(snd, visual_pos(r), -2.0 if not r.is_player else 0.0)
 
 
-## Aim direction (in the shooter's frame) to hit something at relative position rel moving at relative velocity u.
-func _lead(rel: Vector2, u: Vector2, vm: float) -> Vector2:
-	var t := rel.length() / vm
-	for i in 3:
-		t = (rel + u * t).length() / vm
-	return (rel + u * t).normalized()
+static func launch_speed(weapon: String, power: float) -> float:
+	return float(GameData.WEAPONS[weapon]["speed"]) * (0.55 + 0.45 * power)
+
+
+## The launch direction that lands a shot on something moving along the road, now at (ts, td, th) with speeds vs and vd in
+## track space, allowing for the shooter's own velocity and for the drop. How long the shot flies depends on where it goes
+## and where it goes depends on how long it flies, so this goes round a few times. Air drag is small enough to leave out.
+func aim_for(from: Vector3, own: Vector3, muzzle: float, ts: float, td: float, th: float, vs: float, vd: float) -> Vector3:
+	var t := from.distance_to(track.point(ts, td, th)) / muzzle
+	var aim := Vector3.FORWARD
+	for i in 4:
+		aim = track.point(ts + vs * t, td + vd * t, th) - from - own * t + Vector3.UP * (0.5 * Projectile.GRAVITY * t * t)
+		t = aim.length() / muzzle
+	return aim.normalized()
+
+
+## How a rival aims: it reads the same physics, then misses by however much its skill allows.
+func _rival_aim(r: Rider, hand: Vector3, own: Vector3, muzzle: float, reach: float) -> Vector3:
+	var dir := track.tangent_at(r.s)
+	var dist_m := 20.0
+	var tgt := r.target_lock
+	if tgt != null and tgt.is_riding():
+		dir = aim_for(hand, own, muzzle, tgt.s, tgt.d, 1.9 + tgt.height, tgt.speed, tgt.lateral)
+		dist_m = Vector2(tgt.s - r.s, tgt.d - r.d).length()
+	else:
+		var pole := _pole_in_view(r, reach)
+		if not pole.is_empty():
+			dir = aim_for(hand, own, muzzle, float(pole["s"]), float(pole["d"]), 2.3, 0.0, 0.0)
+	var err_deg := 2.5 + (1.0 - r.skill) * 8.0 + dist_m * 0.08
+	if r.is_player:
+		err_deg = 0.6 + dist_m * 0.02
+	dir = dir.rotated(Vector3.UP, deg_to_rad(rng.randfn(0.0, err_deg)))
+	return dir.rotated(dir.cross(Vector3.UP).normalized(), deg_to_rad(rng.randfn(0.0, err_deg * 0.3)))
+
+
+## Where a rider's shots leave from: the weapon in their hand, where there's a model to ask.
+func shot_point(r: Rider) -> Vector3:
+	var v: Variant = visuals.get(r)
+	if v != null:
+		return (v as Node3D).call("shot_point")
+	return r.hand_point(track)
+
+
+## The player's sight is a line from the camera through the point aim_screen on the screen. A shot leaves from the weapon in
+## the rider's hand, which is off to one side of that line, and is aimed to cross the line at the point where the shot will
+## come down: the first thing it would meet if it fell away from the line as it flew. So it lands where the sight and the
+## drop say it should, from wherever the bow really is.
+func update_sight(r: Rider) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		r.aim_dir = Vector3.ZERO
+		return
+	var rect := get_viewport().get_visible_rect().size
+	var ndc := aim_screen * 2.0 - Vector2.ONE
+	var tan_v := tan(deg_to_rad(cam.fov * 0.5))
+	var ray := (cam.global_basis * Vector3(ndc.x * tan_v * rect.x / rect.y, -ndc.y * tan_v, -1.0)).normalized()
+	var from := cam.global_position
+	var hand := shot_point(r)
+	var muzzle := launch_speed(r.ranged_id, maxf(r.draw_amount, 0.25))
+	var own := r.world_velocity(track)
+	var start := (hand - from).dot(ray)
+	var t := maxf(start, 1.0) + 4.0
+	var s_at := r.s
+	while t < SIGHT_RANGE:
+		# where the shot would be after flying this far: it falls away from the sight, and it carries the horse's speed too
+		var fly := (t - start) / muzzle
+		var q := from + ray * t + own * fly + Vector3.DOWN * 0.5 * Projectile.GRAVITY * fly * fly
+		s_at = clampf(s_at + (q - track.point(s_at)).dot(track.tangent_at(s_at)), 0.0, track.length)
+		if q.y <= track.point(s_at).y or _shot_meets(r, q, fly):
+			break
+		t += 1.5
+	r.aim_dir = (from + ray * t - hand).normalized()
+
+
+## Whether a shot at this point, after flying this long, would be meeting something it could hit.
+func _shot_meets(r: Rider, q: Vector3, fly: float) -> bool:
+	for o in riders:
+		if o != r and o.is_riding():
+			var base := track.point(o.s + o.speed * fly, o.d + o.lateral * fly, o.height)
+			var up := q.y - base.y
+			if Vector2(base.x - q.x, base.z - q.z).length() < 1.2 and up > 0.0 and up < RIDER_HIGH + 0.3:
+				return true
+	return roadside.near_target(q, fly)
 
 
 ## The nearest target pole ahead that this rider has not hit yet, for aiming when no rival is in the cone.
@@ -806,40 +1007,84 @@ func _pole_in_view(r: Rider, range_m: float) -> Dictionary:
 func _step_projectiles(dt: float) -> void:
 	for i in range(projectiles.size() - 1, -1, -1):
 		var p := projectiles[i]
-		var ps := p.s
-		var pd := p.d
 		p.step(dt)
 		if p.alive and not p.returning:
-			if hazards.pole_shot(p.shooter, p.s, p.d) and p.kind != "spear":
-				pass
+			var stopped := hazards.pole_shot(p.shooter, p.s, p.d, p.h)
 			for o in riders:
 				if o == p.shooter or not o.is_riding():
 					continue
-				var hit := false
-				for k in 3:
-					var t := float(k + 1) / 3.0
-					var qs := lerpf(ps, p.s, t)
-					var qd := lerpf(pd, p.d, t)
-					var es := (qs - o.s) / 1.5
-					var ed := (qd - o.d) / 0.75
-					if es * es + ed * ed < 1.0:
-						hit = true
-						break
-				if hit:
-					var side := 1 if p.shooter.d > o.d else -1
-					apply_hit(p.shooter, o, p.damage, p.impact, "ranged", p.weapon_id, side)
-					if p.kind == "spear":
-						p.returning = true
-						p.hit_any = true
-					else:
-						p.alive = false
-					break
+				var hit_h := _height_hit(p, o)
+				if hit_h < 0.0:
+					continue
+				var side := 1 if p.shooter.d > o.d else -1
+				var info := apply_hit(p.shooter, o, p.damage, p.impact, "ranged", p.weapon_id, side)
+				if hit_h > RIDER_HEAD and not info.get("blocked", false) and not info.get("ignored", false):
+					rider_event.emit("head_shot", o, {"by": p.shooter})
+				p.hit_any = true
+				stopped = true
+				break
+			if not stopped:
+				match roadside.shot(p):
+					Roadside.Struck.BOARD:
+						if p.kind == "arrow":
+							_land(p)     # it stays in the board
+						stopped = true
+					Roadside.Struck.BEAST:
+						stopped = true
+			if not stopped and hazards.sheep_struck(p.s, p.d, 0.8, p.h):
+				roadside.fine_for_sheep(p.shooter, p.pos)
+				stopped = true
+			if stopped:
+				if p.kind == "spear":
+					p.returning = true
+				else:
+					p.alive = false
+			elif p.kind != "spear" and p.pos.y <= _ground_under(p):
+				_land(p)
 		if not p.alive:
 			if p.kind == "spear":
 				p.shooter.rope_out = false
-			if p.node != null and is_instance_valid(p.node):
-				p.node.queue_free()
+			_retire_projectile_visual(p)
 			projectiles.remove_at(i)
+
+
+## How high above the ground this tick's flight crosses a rider, or -1 if it misses. The shot's path is a straight line over
+## one tick, tested against an upright cylinder around the rider.
+func _height_hit(p: Projectile, o: Rider) -> float:
+	var base := track.point(o.s, o.d, o.height)
+	var a := p.last_pos - base
+	var b := p.pos - base
+	var flat_a := Vector2(a.x, a.z)
+	var flat_ab := Vector2(b.x - a.x, b.z - a.z)
+	var t := clampf(-flat_a.dot(flat_ab) / maxf(flat_ab.length_squared(), 0.0001), 0.0, 1.0)
+	if (flat_a + flat_ab * t).length() > RIDER_HIT_RADIUS:
+		return -1.0
+	var y := lerpf(a.y, b.y, t)
+	return y if y >= RIDER_LOW and y <= RIDER_HIGH else -1.0
+
+
+## The height of the ground under a shot. On and beside the road that's the road's height; further out, the land where it's known.
+func _ground_under(p: Projectile) -> float:
+	if terrain != null and absf(p.d) > track.half_width_at(p.s) + 4.0:
+		return float(terrain.call("ground_y", p.pos.x, p.pos.z))
+	return p.pos.y - p.h
+
+
+## A shot that comes down without hitting anything: an arrow stays stuck where it landed for a while.
+func _land(p: Projectile) -> void:
+	p.alive = false
+	if headless:
+		return
+	if fx != null and absf(p.s - player.s) < 70.0:
+		fx.call("burst", p.pos, Vector3.UP, fx.get("dust_colour"), 0.35)
+	if p.kind == "arrow" and p.node != null and is_instance_valid(p.node):
+		p.node.look_at_from_position(p.pos, p.pos + p.vel.normalized(), Vector3.UP)
+		_stuck.append({"node": p.node, "left": 6.0})
+		p.node = null
+		while _stuck.size() > MAX_STUCK:
+			var old: Dictionary = _stuck.pop_front()
+			if is_instance_valid(old["node"]):
+				(old["node"] as Node).queue_free()
 
 
 func _contacts(dt: float) -> void:
@@ -870,34 +1115,48 @@ func _contacts(dt: float) -> void:
 					a.speed = minf(a.speed, maxf(b.speed - 0.3, 0.5))
 				else:
 					b.speed = minf(b.speed, maxf(a.speed - 0.3, 0.5))
-			var closing_a := a.lateral * sgn      # a moving toward b
-			var closing_b := -b.lateral * sgn     # b moving toward a
 			var key := a.slot * 16 + b.slot
 			if _barge_cd.has(key):
 				continue
+			# only with a real edge in sideways momentum is it a slam: otherwise the horses just lean on each other
 			var attacker: Rider = null
 			var victim: Rider = null
-			var power := 0.0
-			if closing_a > 4.8 and closing_a >= closing_b:
+			if _has_edge(a, b, SLAM_SPEED, SLAM_EDGE):
 				attacker = a
 				victim = b
-				power = closing_a + maxf(closing_b, 0.0) * 0.5
-			elif closing_b > 4.8:
+			elif _has_edge(b, a, SLAM_SPEED, SLAM_EDGE):
 				attacker = b
 				victim = a
-				power = closing_b + maxf(closing_a, 0.0) * 0.5
 			if attacker == null:
 				continue
+			# only a really hard slam sets up the bigger hit that follows it
+			if _has_edge(attacker, victim, STRIKE_SPEED, STRIKE_EDGE):
+				attacker.shoved = victim
+				attacker.shoved_t = SLAM_WINDOW
+			var dir := signf(victim.d - attacker.d)
+			var power := attacker.side_speed() * dir + maxf(-victim.side_speed() * dir, 0.0) * 0.5
 			_barge_cd[key] = 1.6
 			var k := clampf((power - 2.0) / 6.0, 0.35, 1.6)
 			var ratio := clampf(attacker.bulk / maxf(victim.bulk, 0.5), 0.6, 1.7)
 			var vside := -1 if victim.d > attacker.d else 1
 			var bw: Dictionary = GameData.WEAPONS["barge"]
 			apply_hit(attacker, victim, float(bw["damage"]) * k, float(bw["impact"]) * k * ratio, "body", "barge", vside)
-			var push := signf(victim.d - attacker.d)
-			victim.lateral += push * 3.5 * ratio
-			attacker.lateral -= push * 1.5
+			_carry_momentum(attacker, victim)
 			victim.speed = maxf(0.0, victim.speed - 0.6 * k)
+
+
+## Two horses slamming together side on go on together, the heavier one losing less of its speed, with a little spring apart.
+## The rider who slammed keeps what's left of their sideways speed whatever they do with the reins, and the other rider is
+## carried along with it.
+func _carry_momentum(attacker: Rider, victim: Rider) -> void:
+	var total := attacker.bulk + victim.bulk
+	var va := attacker.side_speed()
+	var vb := victim.side_speed()
+	var together := (attacker.bulk * va + victim.bulk * vb) / total
+	var apart := SLAM_BOUNCE * (va - vb) / total
+	attacker.lateral = 0.0
+	attacker.slide = together - apart * victim.bulk
+	victim.slide += together + apart * attacker.bulk - vb
 
 
 func _quiet_penalty(r: Rider) -> void:
@@ -923,6 +1182,16 @@ func _on_swing_started(r: Rider, kind: String) -> void:
 		_quiet_penalty(r)
 	if not headless:
 		Sfx.play_at("whoosh", visual_pos(r), -4.0 if not r.is_player else -1.0, rng.randf_range(0.95, 1.1))
+
+
+## A hat came off (Fx decides when, and calls this). Counts it for the player and tells Chatter, Flair and the HUD.
+func note_hat(victim: Rider, by: Rider) -> void:
+	if headless:
+		return
+	if by != null and by.is_player and by != victim:
+		by.hats_knocked += 1
+		by.silver_bonus += HAT_SILVER
+	rider_event.emit("hat", victim, {"by": by})
 
 
 func _on_crashed(r: Rider, reason: String) -> void:
@@ -1006,7 +1275,7 @@ func _on_hazard(kind: String, r: Rider, info: Dictionary) -> void:
 				Sfx.play("coin")
 		"pole":
 			if r.is_player:
-				announcement.emit("BULLSEYE!  +10", "good")
+				announcement.emit("TARGET POLE!  +10", "good")
 				Sfx.play("bell")
 		"ramp":
 			if r.is_player:
@@ -1091,6 +1360,8 @@ func _projectile_model(p: Projectile) -> Node3D:
 func _make_projectile_visual(p: Projectile) -> void:
 	if _proj_nodes == null:
 		return
+	if p.shooter.is_player:
+		_make_tracer(p)
 	var n := Node3D.new()
 	var model := _projectile_model(p)
 	if model != null:
@@ -1100,28 +1371,26 @@ func _make_projectile_visual(p: Projectile) -> void:
 		if p.kind == "spear":
 			_make_rope(p)
 		return
-	var mesh := CylinderMesh.new()
-	match p.kind:
-		"arrow":
-			mesh.top_radius = 0.03
-			mesh.bottom_radius = 0.03
-			mesh.height = 1.0
-		"stone":
-			mesh.top_radius = 0.12
-			mesh.bottom_radius = 0.12
-			mesh.height = 0.24
-		_:
-			mesh.top_radius = 0.05
-			mesh.bottom_radius = 0.05
-			mesh.height = 1.6
-	mesh.radial_segments = 5
 	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
+	if p.kind == "stone":
+		var ball := SphereMesh.new()
+		ball.radius = 0.09
+		ball.height = 0.18
+		ball.radial_segments = 8
+		ball.rings = 4
+		mi.mesh = ball
+	else:
+		var mesh := CylinderMesh.new()
+		mesh.top_radius = 0.03 if p.kind == "arrow" else 0.05
+		mesh.bottom_radius = mesh.top_radius
+		mesh.height = 1.0 if p.kind == "arrow" else 1.6
+		mesh.radial_segments = 5
+		mi.mesh = mesh
+		mi.rotation_degrees.x = 90.0
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Color("2a1d18") if p.kind != "stone" else Color("8a8a90")
+	m.albedo_color = Color("2a1d18") if p.kind != "stone" else Color("6b6570")
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mi.material_override = m
-	mi.rotation_degrees.x = 90.0
 	n.add_child(mi)
 	_proj_nodes.add_child(n)
 	p.node = n
@@ -1146,23 +1415,69 @@ func _make_rope(p: Projectile) -> void:
 		p.rope = rope
 
 
-func _update_projectile_visuals() -> void:
+## A thin line behind the player's own shots, so the arc they fly can be seen and learned.
+func _make_tracer(p: Projectile) -> void:
+	var mi := MeshInstance3D.new()
+	mi.mesh = ImmediateMesh.new()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true
+	mi.material_override = m
+	_proj_nodes.add_child(mi)
+	p.tracer = mi
+
+
+func _draw_tracer(p: Projectile) -> void:
+	if p.path.is_empty() or p.path[p.path.size() - 1].distance_squared_to(p.pos) > 0.25:
+		p.path.append(p.pos)
+	var im := p.tracer.mesh as ImmediateMesh
+	im.clear_surfaces()
+	if p.path.size() < 2:
+		return
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for i in p.path.size():
+		im.surface_set_color(Color(1.0, 0.97, 0.85, 0.15 + 0.7 * float(i) / float(p.path.size() - 1)))
+		im.surface_add_vertex(p.path[i])
+	im.surface_end()
+
+
+## The shot itself is gone (a stuck arrow has already been handed over). Its line fades out over a moment.
+func _retire_projectile_visual(p: Projectile) -> void:
+	if p.node != null and is_instance_valid(p.node):
+		p.node.queue_free()
+	if p.rope != null and is_instance_valid(p.rope):
+		p.rope.queue_free()
+	if p.tracer != null and is_instance_valid(p.tracer):
+		var fade := create_tween()
+		fade.tween_property(p.tracer.material_override, "albedo_color:a", 0.0, 0.6)
+		fade.tween_callback(p.tracer.queue_free)
+
+
+func _update_projectile_visuals(delta: float) -> void:
 	for p in projectiles:
+		if p.tracer != null and is_instance_valid(p.tracer):
+			_draw_tracer(p)
 		if p.node == null or not is_instance_valid(p.node):
 			continue
-		var pos := track.point(p.s, p.d, p.h)
-		var ahead := track.point(p.s + p.vs * 0.02, p.d + p.vd * 0.02, p.h)
-		if p.returning:
-			ahead = pos + (pos - track.point(p.shooter.s, p.shooter.d, 1.2))
+		var pos := p.pos
+		var ahead := pos + (pos - p.shooter.hand_point(track)).normalized() if p.returning else pos + p.vel.normalized()
 		if pos.distance_to(ahead) > 0.001:
 			p.node.look_at_from_position(pos, ahead, Vector3.UP)
 		else:
 			p.node.position = pos
 		if p.rope != null and is_instance_valid(p.rope):
-			var hand := track.point(p.shooter.s + 0.2, p.shooter.d + 0.4, 1.5 + p.shooter.height)
+			var hand := shot_point(p.shooter)
 			var mid := (hand + pos) * 0.5
 			var ln := hand.distance_to(pos)
 			if ln > 0.05:
 				p.rope.look_at_from_position(mid, pos, Vector3.UP)
 				p.rope.rotate_object_local(Vector3.RIGHT, PI * 0.5)
 				p.rope.scale = Vector3(1.0, ln, 1.0)
+	for i in range(_stuck.size() - 1, -1, -1):
+		_stuck[i]["left"] = float(_stuck[i]["left"]) - delta
+		if float(_stuck[i]["left"]) <= 0.0:
+			if is_instance_valid(_stuck[i]["node"]):
+				(_stuck[i]["node"] as Node).queue_free()
+			_stuck.remove_at(i)

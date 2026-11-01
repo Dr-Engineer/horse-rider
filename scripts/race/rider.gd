@@ -34,11 +34,19 @@ class Intent:
 
 # --- tuning ---
 const CRUISE := 0.62            # fraction of top speed held with no input
-const CURVE_K := 0.30           # curve push strength, times speed squared times curvature
+const CURVE_K := 0.42           # curve push strength, times speed squared times curvature
 const MAX_PUSH := 6.5
 const WHIP_BOOST := 1.12
 const WHIP_DRAIN := 22.0
 const STAMINA_REGEN := 9.0
+const DRAFT_TOP := 0.12         # in a full slipstream: this much more top speed,
+const DRAFT_ACCEL := 0.8        # this much more acceleration,
+const DRAFT_EASE := 0.35        # this much less stamina spent on the whip, and this much more of it back when not whipping
+const HAND_HEIGHT := 1.95       # where a rider looses a shot from, above the ground
+const DRAW_SLOW := 0.93         # the horse's top speed is this much of itself while a shot is drawn
+const KICK_DELAY := 0.3         # a kick takes this long to land,
+const KICK_SLOW := 0.9          # and the horse's top speed is this much of itself until it's done
+const SLIDE_TIME := 0.55        # sideways momentum from a slam or a kick fades with this time constant, in seconds
 const EXHAUSTED_TOP := 0.88
 const SHAKE_DRAIN := 5.5
 const WOBBLE_AT := 45.0
@@ -82,7 +90,8 @@ var rng: RandomNumberGenerator
 var s := 0.0
 var d := 0.0
 var speed := 0.0
-var lateral := 0.0
+var lateral := 0.0              # sideways speed from the reins, which answers at once
+var slide := 0.0                # sideways speed carried from a slam or a kick, which the reins don't stop, only fight
 var height := 0.0
 var vy := 0.0
 var top_speed := 20.0
@@ -133,7 +142,8 @@ var land_cooldown := 0.0
 var in_quiet := false
 var on_scrub := false
 var scooping_t := 0.0
-var draft := 0.0
+var draft := 0.0                # how far into another horse's wind trail, 0 to 1
+var draft_from: Rider = null    # whose
 var scoop_side := 1.0
 var pole_hits: Dictionary = {}
 var scarf_taken: Dictionary = {}
@@ -141,6 +151,13 @@ var steward_hits := 0
 var damage_dealt := 0.0
 var hits_landed := 0
 var teetering_announced := false
+
+# fun stats, counted only when the race has visuals (never in the headless sim)
+var hats_knocked := 0
+var near_misses := 0
+var overtakes := 0
+var best_streak := 0
+var hat_off := false
 
 # combat
 var swing_t := -1.0
@@ -163,6 +180,9 @@ var fire_pending := false
 var fire_power := 0.0
 var rope_out := false
 var target_lock: Rider = null
+var aim_dir := Vector3.ZERO     # where this rider's next shot goes, set from the sight. Zero leaves it to rival aiming.
+var shoved: Rider = null        # who this rider just slammed with the horse,
+var shoved_t := 0.0             # and how long a strike on them still lands harder
 
 # crash flow
 var crash_reason := ""
@@ -222,6 +242,9 @@ func setup(p_data: Dictionary, opts: Dictionary, p_rng: RandomNumberGenerator) -
 		ranged_id = ""
 	var w: Dictionary = GameData.weapon(ranged_id) if ranged_id != "" else {}
 	ammo = int(w.get("ammo", 0)) if ranged_id != "" else 0
+	# a rival carries a third of a full quiver: more shots are there for the player's aim, not to be pelted with
+	if not is_player and ammo > 0:
+		ammo = ammo / 3
 	saddle_cut = GameData.saddle_cut(int(opts.get("saddle_level", 0)))
 	max_health = 100.0 + GameData.armor_health(int(opts.get("armor_level", 0)))
 	health = max_health
@@ -249,6 +272,14 @@ func gait() -> String:
 
 func is_riding() -> bool:
 	return state == "ride" or state == "airborne"
+
+
+## The wardrobe's hat piece ("hat_felt"...), or "" for a rider who wears none.
+func hat_piece() -> String:
+	for w: Variant in wardrobe:
+		if String(w).begins_with("hat_"):
+			return String(w)
+	return ""
 
 
 func is_ranged_only() -> bool:
@@ -302,11 +333,11 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 	# --- stamina and whip ---
 	whip_on = it.whip and stamina > 0.0 and not airborne and not blocking and not exhausted
 	if whip_on:
-		stamina = maxf(0.0, stamina - WHIP_DRAIN * dt)
+		stamina = maxf(0.0, stamina - WHIP_DRAIN * (1.0 - DRAFT_EASE * draft) * dt)
 		if stamina <= 0.0:
 			exhausted = true
 	else:
-		stamina = minf(max_stamina, stamina + STAMINA_REGEN * dt * (0.6 if exhausted else 1.0))
+		stamina = minf(max_stamina, stamina + STAMINA_REGEN * (1.0 + DRAFT_EASE * draft) * dt * (0.6 if exhausted else 1.0))
 		if exhausted and stamina >= 0.25 * max_stamina:
 			exhausted = false
 
@@ -319,11 +350,13 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 	if second_wind_t > 0.0:
 		top *= 1.12
 	top *= clampf(1.0 - track.slope_at(s) * 0.9, 0.85, 1.12)
-	top *= 1.0 + 0.06 * draft
+	top *= 1.0 + DRAFT_TOP * draft
 	if blocking:
 		top *= 0.85
 	if drawing:
-		top *= 0.94
+		top *= DRAW_SLOW
+	if swing_t >= 0.0 and swing_kind == "kick":
+		top *= KICK_SLOW
 	var edge := absf(d) - hw
 	on_scrub = edge > 0.0
 	var cap := top
@@ -343,7 +376,7 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 	target = minf(target, cap)
 	if target > speed:
 		var accel: float = horse["accel"]
-		accel *= (1.5 if whip_on else 1.0) * (1.25 if second_wind_t > 0.0 else 1.0) * (1.0 + 0.3 * draft)
+		accel *= (1.5 if whip_on else 1.0) * (1.25 if second_wind_t > 0.0 else 1.0) * (1.0 + DRAFT_ACCEL * draft)
 		accel *= clampf(1.45 - speed / maxf(top, 1.0), 0.3, 1.0)
 		speed = minf(speed + accel * dt, target)
 	else:
@@ -380,8 +413,13 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 	if airborne:
 		lat_target *= 0.35
 	lat_target += wobble_dir * 3.4 * wobble_amount
+	# Steering the same way as a slam's momentum adds nothing until the momentum has faded below what steering alone gives.
+	if lat_target * slide > 0.0:
+		lat_target = signf(lat_target) * maxf(absf(lat_target) - absf(slide), 0.0)
 	var k := 1.0 - exp(-dt / 0.06)
 	lateral += (lat_target - lateral) * k
+	slide *= exp(-dt / SLIDE_TIME)
+	shoved_t = maxf(0.0, shoved_t - dt)
 
 	# --- curve push ---
 	var kappa := track.curve_at(s)
@@ -390,7 +428,7 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 		push *= 0.5
 
 	# --- integrate position ---
-	d += (lateral + push) * dt
+	d += (lateral + slide + push) * dt
 	var inner := maxf(0.55, 1.0 - kappa * d)
 	var slope_mult := 1.0
 	s += speed * slope_mult / inner * dt
@@ -404,8 +442,9 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 			return
 		d = clampf(d, -limit, limit)
 		lateral = 0.0
+		slide = 0.0
 		speed = minf(speed, 6.0)
-	yaw = lerpf(yaw, atan2(lateral + push, maxf(speed, 4.0)), 1.0 - exp(-dt / 0.1))
+	yaw = lerpf(yaw, atan2(lateral + slide + push, maxf(speed, 4.0)), 1.0 - exp(-dt / 0.1))
 	horse_s = s
 	horse_d = d
 	horse_speed = speed
@@ -430,6 +469,22 @@ func _tick_ride(dt: float, it: Intent, track: Track) -> void:
 	_tick_combat(dt, it)
 
 	# --- crash from fast shake dropping? never. Done. ---
+
+
+## This rider's velocity in the world, which a shot inherits when it leaves the hand.
+func world_velocity(track: Track) -> Vector3:
+	var push := clampf(-track.curve_at(s) * speed * speed * CURVE_K, -MAX_PUSH, MAX_PUSH)
+	return track.tangent_at(s) * speed + track.right_at(s) * (side_speed() + push) + Vector3.UP * vy
+
+
+## All the sideways speed the rider has of their own, reins and momentum together.
+func side_speed() -> float:
+	return lateral + slide
+
+
+## Where this rider's ranged weapon is, near enough, with no model to ask: a bow in the left hand, anything else in the right.
+func hand_point(track: Track) -> Vector3:
+	return track.point(s + 0.5, d + (-0.35 if ranged_id == "bow" else 0.35), HAND_HEIGHT + height)
 
 
 func leap_now(power: float) -> void:
@@ -519,7 +574,7 @@ func _start_swing(side: int, kind: String) -> void:
 	swing_weapon = wid
 	var w: Dictionary = GameData.WEAPONS[wid]
 	swing_total = w["swing"]
-	swing_hit_t = swing_total * (0.45 if kind == "kick" else 0.36)
+	swing_hit_t = KICK_DELAY if kind == "kick" else swing_total * 0.36
 	swing_t = 0.0
 	swing_done = false
 	swing_quiet_charged = false
@@ -529,7 +584,8 @@ func _start_swing(side: int, kind: String) -> void:
 func _tick_finished(dt: float, track: Track) -> void:
 	speed = maxf(0.0, speed - 5.5 * dt)
 	var hw := track.half_width_at(s)
-	lateral = lerpf(lateral, clampf(-d, -3.0, 3.0) * 0.5, 1.0 - exp(-dt / 0.3))
+	# ease in from the edges toward the middle, but keep a lane of your own (Race spreads finished riders apart)
+	lateral = lerpf(lateral, (clampf(d, -hw * 0.5, hw * 0.5) - d) * 0.7, 1.0 - exp(-dt / 0.3))
 	d = clampf(d + lateral * dt, -hw, hw)
 	s = minf(s + speed * dt, track.length - 2.0)
 	blocking = false
@@ -619,7 +675,9 @@ func crash(reason: String, from_side: float = 0.0) -> void:
 	horse_d = d
 	horse_speed = speed
 	fall_vs = speed * 0.62
-	fall_vd = lateral * 0.4 + fall_dir * 1.6
+	fall_vd = side_speed() * 0.4 + fall_dir * 1.6
+	slide = 0.0
+	shoved_t = 0.0
 	vy = 4.2 + speed * 0.07
 	height = 0.05
 	if reason == "health":
@@ -724,4 +782,5 @@ func to_result() -> Dictionary:
 	return {
 		"rider": self, "place": place, "time": finish_time, "knockdowns": knockdowns,
 		"bounty": 0, "scoops": scoops, "crashed": crashes, "fines": fines, "silver": silver_bonus,
+		"hats": hats_knocked, "near_misses": near_misses, "overtakes": overtakes, "best_streak": best_streak,
 	}

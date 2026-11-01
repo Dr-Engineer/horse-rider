@@ -51,6 +51,8 @@ func build_into(parent: Node3D) -> void:
 	for ev: Dictionary in course.events:
 		if ev.type == "start" or ev.type == "finish":
 			_keep_out.append([float(ev.s) - 30.0, float(ev.s) + 30.0])
+		elif ev.type == "bullseye" or ev.type == "wolf_flock":
+			_keep_out.append([float(ev.s) - 12.0, float(ev.s) + 12.0])     # a clear view of them from the road
 	for sp: Dictionary in course.get("set_pieces", []):
 		if sp.prop == "bridge_cant" or sp.prop == "gate_chorten":
 			_keep_out.append([float(sp.s) - 40.0, float(sp.s) + 40.0])
@@ -69,6 +71,10 @@ func build_into(parent: Node3D) -> void:
 		_survey_stakes()
 	if dress.get("truck", false):
 		_place_truck()
+	if dress.get("milestones", true):
+		_milestones()
+	if dress.get("plumes", false):
+		_dust_plumes()
 
 
 # --- helpers ------------------------------------------------------------------------------------------------------
@@ -137,12 +143,9 @@ func _pick(layer: Dictionary, s: float, side: int, lat_in: float = NAN, extent: 
 		return {}
 	if _slope_at(p.x, p.z) > float(layer.get("slope", 0.6)):
 		return {}
-	# Another stretch of road close by (hairpins): the raster gives a lower bound on the distance.
-	var near := _b.dist_to_road(p.x, p.z)
-	if near < hw + CLEAR and near > 0.0:
-		var idx := _b.nearest_index(p.x, p.z)
-		if absf(float(idx) * Track.STEP - s) > 80.0:
-			return {}
+	# Far enough out from this stretch of road can still be on another, across the inside of a tight bend.
+	if _b.road_gap(p.x, p.z) < hw + CLEAR:
+		return {}
 	return {"pos": Vector3(p.x, y, p.z), "s": s, "lat": lat}
 
 
@@ -165,6 +168,9 @@ func _prop_radius(prop: String, aligned: bool) -> float:
 	return r
 
 
+const FOLIAGE: Array[String] = ["grass_tuft", "bush", "willow", "juniper", "barley_patch"]
+
+
 func _tint(layer: Dictionary) -> Color:
 	var t: Array = layer.get("tint", [])
 	var c := Color.WHITE
@@ -173,6 +179,10 @@ func _tint(layer: Dictionary) -> Color:
 	elif t.size() == 1:
 		c = t[0]
 	var v := _r.randf_range(0.9, 1.08)
+	if FOLIAGE.has(String(layer.get("prop", ""))):
+		# the Season's colour for plants (data/courses.gd)
+		var st: Color = course.get("dress", {}).get("foliage_tint", Color.WHITE)
+		c = Color(c.r * st.r, c.g * st.g, c.b * st.b)
 	return Color(c.r * v, c.g * v, c.b * v)
 
 
@@ -180,7 +190,11 @@ func _pick_count(layer: Dictionary) -> int:
 	var f0 := float(layer.get("f0", 0.0))
 	var f1 := float(layer.get("f1", 1.0))
 	var span := (f1 - f0) * track.length
-	return int(round(float(layer.n) * span / 100.0))
+	var n := float(layer.n)
+	if String(layer.get("prop", "")) == "flowers":
+		# meadows are in bloom in Spring and nearly done by the Harvest
+		n *= [1.5, 1.0, 0.3][clampi(int(course.get("season", 0)), 0, 2)]
+	return int(round(n * span / 100.0))
 
 
 func _s_range(layer: Dictionary) -> Vector2:
@@ -335,6 +349,9 @@ func _set_slots(node: Node, a: Color, b: Color) -> void:
 	if node is GeometryInstance3D:
 		(node as GeometryInstance3D).set_instance_shader_parameter("slot_a", a)
 		(node as GeometryInstance3D).set_instance_shader_parameter("slot_b", b)
+		if String(node.name).begins_with("crowd"):
+			# every crowd group bobs and cheers on its own beat
+			(node as GeometryInstance3D).set_instance_shader_parameter("phase_shift", fposmod(float(node.get_instance_id()) * 0.6180339, 1.0))
 	for c in node.get_children():
 		_set_slots(c, a, b)
 
@@ -419,6 +436,47 @@ func _gates_and_crowds() -> void:
 					banner.position = spot_b.pos
 					_set_range(banner, 900.0)
 					_root.add_child(banner)
+
+
+## Stacked-stone road markers every 250 m or so, alternating sides, at the edge of the verge.
+func _milestones() -> void:
+	if not _has_prop("milestone"):
+		return
+	var s := 140.0
+	var side := 1 if _r.randf() < 0.5 else -1
+	while s < track.length - 120.0:
+		var lat := float(side) * (track.half_width_at(s) + CLEAR + 0.9)
+		var spot := _pick({"slope": 0.5}, s, side, lat)
+		if not spot.is_empty():
+			var m := ArtKit.prop("milestone")
+			var k := _r.randf_range(0.95, 1.2)
+			m.scale = Vector3.ONE * k
+			m.position = (spot.pos as Vector3) - Vector3(0, 0.06, 0)
+			m.rotation.y = _r.randf() * TAU
+			_set_range(m, 360.0)
+			_root.add_child(m)
+		side = -side
+		s += 250.0 + _r.randf_range(-30.0, 30.0)
+
+
+## Far columns of dust, kilometres off across the plain, for the third Season: the world quietly changing. No comment.
+func _dust_plumes() -> void:
+	if not _has_prop("dust_plume"):
+		return
+	var count := 5
+	for i in count:
+		var s := track.length * (0.12 + 0.76 * (float(i) + _r.randf() * 0.7) / float(count))
+		var side := 1 if i % 2 == 0 else -1
+		var lat := float(side) * _r.randf_range(1400.0, 3000.0)
+		var p := track.point(s, lat)
+		var y := _b.ground_y(p.x, p.z)
+		var node := ArtKit.prop("dust_plume")
+		var k := _r.randf_range(1.8, 2.8)
+		node.scale = Vector3(k * 0.8, k, k * 0.8)
+		node.position = Vector3(p.x, y - 8.0, p.z)
+		node.rotation.y = _r.randf() * TAU
+		_set_range(node, 5200.0)
+		_root.add_child(node)
 
 
 func _survey_stakes() -> void:

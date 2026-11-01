@@ -43,7 +43,7 @@ kindly. Yangkyi gets the same treatment, for the same reason.
 | # | Course | Region | Look | Signature |
 |---|---|---|---|---|
 | 1 | **Tea Horse Road** | Kham | Red rock gorge, spruce and juniper, river below on the right, red log houses | Mule caravans, cantilever bridge, narrow ledges |
-| 2 | **Grass Sea** | Nagchu | Open gold-green plain, huge sky, black yak-hair tents, low far ranges | Yak herds crossing, wide fast racing, long bow range |
+| 2 | **Grass Sea** | Nagchu | Open gold-green plain, huge sky, black yak-hair tents, low far ranges | Yak herds crossing, the widest road and the longest sweeping bends, long bow range |
 | 3 | **Turquoise Pass** | Kamba La, Yamdrok | Climb to a cairn and flags, snow patches, then descent beside the turquoise lake | Hairpins, the high pass, drop-off at the lake side |
 | 4 | **Gallop Behind the Fort** | Gyantse | Barley fields, stone villages, the dzong on its rock, the white and gold Kumbum, tent city | Target poles, narrow runway, festival crowds, Quiet Ground at the monastery |
 | 5 | **The Western Gate** | Lhasa | Willow groves, whitewashed walls, Potala and Chakpori, the gate chorten over the road | Quiet Ground through the gate, huge crowds, finish on the plain before the Potala |
@@ -62,7 +62,7 @@ individuals. Names still need checking by a Tibetan speaker.
 
 | # | Name | Region | Season | Weapon | Style and personality | Look (head, body, accent) |
 |---|---|---|---|---|---|---|
-| 1 | Pon Wangyal Dorje | Kham | 1+ (final boss) | Sword | Front-runner who picks fights. Vain, generous, instantly offended, instantly friends again | Wound hair, red tassel, silk robe one sleeve off, red |
+| 1 | Pon Wangyal Dorje | Kham | 1+ (final boss) | Sword | Front-runner who picks fights. Vain, generous, instantly offended, instantly friends again | Wound hair with red tassel under a tall gold hat (it gets knocked off), silk robe one sleeve off, red |
 | 2 | Karma Tobgye | Kham | 1+ | Whip | Old caravan guard. Knows every shortcut, trusts nobody | Plain felt hat, sheepskin, satchels, iron grey |
 | 3 | Sonam Phurba | Changtang | 1+ | Sling | Salt trekker. Stubborn. Strong on climbs, long range harassment | Fox-fur hat, long sleeves, salt bags |
 | 4 | Pasang Tsomo | Changtang | 1+ | Key-weight rope (uses Whip) | Herder. Blunt, holds her lane, makes others come to her | Plaits, dark doja, striped robe, brass |
@@ -101,8 +101,17 @@ gets the same fortune for it. No one remarks on it.
 
 ### Crash and race lines
 
-Shown as big comic words, kept short: THWACK, CLANG, OOF, UNSEATED, DOWN!, TEETERING, KI KI SO SO!, and
-"HANDS DOWN" on Quiet Ground.
+Shown as big comic words, kept short: THWACK, CLANG, OOF, UNSEATED, DOWN!, TEETERING, KI KI SO SO!, HAT!, CLOSE!, PASSED KARMA!,
+DOUBLE!, RAMPAGE!, and "HANDS DOWN" on Quiet Ground.
+
+### Voices
+
+Every rider talks during a race, in Tibetan and English, with a subtitle beside their portrait. Each has their own in-race lines
+in `art/tools/voice_script.py`, written to match the voice samples above, and all the Tibetan is listed in `docs/VOICE_SCRIPT.md`.
+
+The narrator also tells the story aloud and offers a **saying** between races. The sayings are the storyteller's own, invented
+for the game, because he's a boaster and not a source. The one exception is "like a yeti catching marmots", a real Tibetan
+proverb. Anything else presented as a real Tibetan proverb needs a source first.
 
 ## End card (after credits, plain text)
 

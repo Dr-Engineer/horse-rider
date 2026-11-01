@@ -2,7 +2,11 @@
 
 Original synthesis only (noise shaping, additive and modal tones, Karplus-Strong plucks). No samples, no chanting,
 no sacred music. Music is pentatonic: plucked lute, frame drum, cymbal and a low horn drone.
-Run: "/Applications/Blender 5.2.app/Contents/Resources/5.2/python/bin/python3.13" -I art/tools/make_audio.py
+Needs numpy only. Run it with the voice tools' Python or any Python that has numpy:
+  <voice venv>/Scripts/python.exe art/tools/make_audio.py [group ...]
+Groups: hooves, sfx, animals, music, jingles. With none named, everything is rendered; name some to re-render only those
+(the music is the slow part). The crowd murmur is no longer made here: art/tools/make_voices.py builds assets/audio/crowd.wav
+from real overlapped phrases, and the crowd shouts assets/audio/voice/cheer_*.ogg.
 Every loop is rendered with circular mixing and FFT filtering, so its seam is continuous by construction.
 The script prints a level and seam report; nothing here can clip.
 """
@@ -176,13 +180,29 @@ def midi_hz(m):
 
 
 def hoof(sr, rng, pitch=1.0, soft_amt=0.0):
-    n = int(0.16 * sr)
+    """One hoof landing on packed dirt: a dull thump in the ground, a muffled mid-band 'thup' where the hoof meets the
+    soil, a faint hollow knock from the hoof wall, and a short scatter of grit. Nothing here is a bright click."""
+    n = int(0.2 * sr)
     t = np.arange(n) / sr
-    f = 120 * pitch * (1 + 0.6 * np.exp(-t / 0.015))
-    thud = osc(f, sr) * ex(n, 0.035, sr)
-    tick = unit(bp(rng.standard_normal(n), 500 * pitch, 2600 * pitch, sr)) * ex(n, 0.009, sr)
-    grit = unit(bp(rng.standard_normal(n), 2200, 7000, sr)) * ex(n, 0.022, sr)
-    return 0.6 * thud + (1.1 - 0.5 * soft_amt) * tick + (0.55 - 0.35 * soft_amt) * grit
+    # The ground takes the weight: a low sine that falls fast, plus a soft low noise puff.
+    thump = osc(78.0 * pitch * (1.0 + 1.5 * np.exp(-t / 0.018)), sr) * ex(n, 0.055, sr)
+    whump = unit(lp(rng.standard_normal(n), 420.0 * pitch, sr)) * ex(n, 0.04, sr)
+    # The hoof meets the soil: noise in the low mids with a quick, soft attack, so it thuds rather than ticks.
+    soil = unit(bp(rng.standard_normal(n), 220.0 * pitch, 1500.0 * pitch, sr)) * ex(n, 0.026, sr)
+    soil *= np.minimum(1.0, t / 0.0025)
+    # The hoof wall rings a little, hollow: two damped partials, quiet.
+    knock = (np.sin(TAU * 610.0 * pitch * t) * ex(n, 0.011, sr) + 0.6 * np.sin(TAU * 960.0 * pitch * t + 1.0) * ex(n, 0.008, sr))
+    # Grit and dust: tiny soft grains thrown up just after the impact, thinning out.
+    grit = np.zeros(n)
+    for _ in range(rng.integers(7, 14)):
+        at = int((0.004 + rng.exponential(0.028)) * sr)
+        m = int(rng.uniform(0.0008, 0.0022) * sr)
+        if at + m < n:
+            g = unit(bp(rng.standard_normal(m), 1500.0, 5500.0, sr)) * np.hanning(m)
+            grit[at:at + m] += g * rng.uniform(0.12, 0.5) * np.exp(-at / sr / 0.05)
+    hard = 1.0 - 0.6 * soft_amt          # a slower, softer gait lands more gently
+    out = 0.8 * thump + 0.45 * whump + 1.1 * soil + 0.2 * hard * knock + 0.75 * hard * grit
+    return lp(out, 6500.0, sr, 1)
 
 
 def hoof_loop(name, stride, beats, strides, soft_amt, pair_gap=0.014):
@@ -192,11 +212,10 @@ def hoof_loop(name, stride, beats, strides, soft_amt, pair_gap=0.014):
     for k in range(strides):
         for off, pitch, vel, pair in beats:
             at = int((k * stride + off * stride) * SR)
-            v = vel * (1 + rng.uniform(-0.12, 0.12))
-            mix_wrap(buf, hoof(SR, rng, pitch * (1 + rng.uniform(-0.04, 0.04)), soft_amt), at, v)
+            v = vel * (1 + rng.uniform(-0.15, 0.15))
+            mix_wrap(buf, hoof(SR, rng, pitch * (1 + rng.uniform(-0.05, 0.05)), soft_amt), at, v)
             if pair:
-                mix_wrap(buf, hoof(SR, rng, pitch * 1.12, soft_amt), at + int(pair_gap * SR), v * 0.8)
-    # dry body: a faint dusty low rumble that follows the same rhythm would blur it, so none.
+                mix_wrap(buf, hoof(SR, rng, pitch * 1.1, soft_amt), at + int(pair_gap * SR), v * 0.75)
     save(name, buf, SR, 0.8, loop=True)
 
 
@@ -275,16 +294,19 @@ def flute_tone(sr, f0, dur, att=0.06, rel=0.25, seed=2):
 
 # ---------------------------------------------------------------- sound effects
 
-def build_sfx():
-    # ---- hooves, one loop per gait (stride patterns: walk 4-beat, trot 2-beat, canter 3-beat+gap, gallop 4-beat+gap).
-    # Stride lengths equal the horse.glb animation cycles (walk 1.067 s, trot 0.533, canter 0.6, gallop 0.467).
-    hoof_loop("hooves_walk", 1.0667, [(0.00, 0.95, 0.55, False), (0.25, 1.10, 0.50, False),
-                                    (0.50, 0.95, 0.55, False), (0.75, 1.10, 0.50, False)], 2, 0.6)
-    hoof_loop("hooves_trot", 0.5333, [(0.00, 1.0, 0.80, True), (0.50, 1.0, 0.75, True)], 4, 0.3)
-    hoof_loop("hooves_canter", 0.60, [(0.00, 0.92, 0.75, False), (0.30, 1.0, 0.85, True), (0.61, 1.12, 0.80, False)], 4, 0.15)
-    hoof_loop("hooves_gallop", 0.4667, [(0.00, 0.90, 0.80, False), (0.167, 0.95, 0.70, False),
-                                      (0.405, 1.10, 0.85, False), (0.62, 1.15, 0.90, False)], 5, 0.0)
+def build_hooves():
+    # One loop per gait (stride patterns: walk 4-beat, trot 2-beat, canter 3-beat+gap, gallop 4-beat+gap).
+    # Each loop runs at the middle of the cadence the horse's legs play at (RiderVisual.GAIT_HZ), and Sfx.LOOP_HZ must match: 1.2, 2.5,
+    # 2.55 and 3.1 strides a second. Sfx then only nudges the rate, so the hoofbeats stay with the feet and keep their timbre.
+    hoof_loop("hooves_walk", 1.0 / 1.2, [(0.00, 0.95, 0.55, False), (0.25, 1.10, 0.50, False),
+                                        (0.50, 0.95, 0.55, False), (0.75, 1.10, 0.50, False)], 3, 0.6)
+    hoof_loop("hooves_trot", 1.0 / 2.5, [(0.00, 1.0, 0.80, True), (0.50, 1.0, 0.75, True)], 6, 0.3)
+    hoof_loop("hooves_canter", 1.0 / 2.55, [(0.00, 0.92, 0.75, False), (0.30, 1.0, 0.85, True), (0.61, 1.12, 0.80, False)], 6, 0.15)
+    hoof_loop("hooves_gallop", 1.0 / 3.1, [(0.00, 0.90, 0.80, False), (0.167, 0.95, 0.70, False),
+                                         (0.405, 1.10, 0.85, False), (0.62, 1.15, 0.90, False)], 8, 0.0)
 
+
+def build_sfx():
     # ---- wind: periodic noise with slow gusts
     rng = rng_for("wind")
     n = int(6.0 * SR)
@@ -295,21 +317,8 @@ def build_sfx():
     whistle = unit(bp(rng.standard_normal(n), 700, 1100, SR)) * (0.5 + 0.5 * np.sin(TAU * 2 * t / 6.0 + 0.5)) * 0.25
     save("wind", unit(w) * gust + whistle * gust, SR, 0.7, loop=True)
 
-    # ---- crowd: a murmur of formant-filtered noise with swells and a few cheers
-    rng = rng_for("crowd")
-    n = int(8.0 * SR)
-    t = np.arange(n) / SR
-    base = unit(bp(rng.standard_normal(n), 220, 3200, SR))
-    base = peaking(base, 520, 1.2, 2.2, SR)
-    base = peaking(base, 1350, 1.0, 1.8, SR)
-    out = np.zeros(n)
-    for k in range(5):
-        voice = unit(bp(rng.standard_normal(n), 300 + 150 * k, 900 + 350 * k, SR))
-        am = 0.55 + 0.45 * np.sin(TAU * (k + 1) * t / 8.0 + rng.uniform(0, TAU)) * np.sin(TAU * (2 * k + 3) * t / 8.0 + rng.uniform(0, TAU))
-        out += voice * np.abs(am) * 0.45
-    swell = 0.6 + 0.4 * np.sin(TAU * t / 8.0 - 1.0) + 0.2 * np.sin(TAU * 3 * t / 8.0)
-    cheer = unit(bp(rng.standard_normal(n), 900, 2600, SR)) * np.maximum(0, np.sin(TAU * 2 * t / 8.0 + 0.7)) ** 3 * 0.9
-    save("crowd", (base * 0.8 + out + cheer) * swell, SR, 0.7, loop=True)
+    # ---- crowd: no longer made here. art/tools/make_voices.py builds assets/audio/crowd.wav (a walla of real overlapped
+    # phrases, wrapped so it loops) and the cheers; a synthetic murmur never sounded like people.
 
     # ---- hits: short and dry
     r = rng_for("hit_light")
@@ -472,6 +481,186 @@ def build_sfx():
     r = rng_for("land")
     land = osc(90 * (1 + 0.8 * np.exp(-t / 0.03)), SR) * ex(n, 0.06, SR) + 0.4 * unit(bp(r.standard_normal(n), 200, 1500, SR)) * ex(n, 0.03, SR)
     save("land", fade(land, SR, 0.001, 0.03), SR, 0.7)
+
+
+
+# ---------------------------------------------------------------- animals and small sounds
+
+def smooth_noise(n, sr, cutoff, rng):
+    """Slowly wandering random values between -1 and 1, for jitter and shimmer."""
+    x = lp(rng.standard_normal(n), cutoff, sr, 2)
+    return x / (np.max(np.abs(x)) + 1e-9)
+
+
+def contour(t, points):
+    """A curve through (time, value) breakpoints, one value per sample."""
+    return np.interp(t, [p[0] for p in points], [p[1] for p in points])
+
+
+def formant_voice(sr, f0, formants, tilt=1.0, jitter=0.0, shimmer=0.0, seed=1):
+    """A harmonic source shaped by formants that may move. Additive, so each harmonic takes its own gain from the formant
+    curve at its own frequency. f0 is Hz per sample; formants is a list of (frequency, bandwidth, gain) and a frequency
+    may be an array with one value per sample."""
+    rng = np.random.default_rng(seed)
+    n = len(f0)
+    if jitter > 0.0:
+        f0 = f0 * (1.0 + jitter * smooth_noise(n, sr, 80.0, rng))
+    ph = np.cumsum(f0) / sr
+    top = sr * 0.46
+    hmax = int(min(90, top / max(float(np.min(f0)), 30.0)))
+    out = np.zeros(n)
+    for h in range(1, hmax + 1):
+        fh = h * f0
+        env = np.full(n, 0.02)
+        for freq, bw, gain in formants:
+            env = env + gain / (1.0 + ((fh - freq) / (0.5 * bw)) ** 2)
+        amp = np.where(fh < top, env / (h ** tilt), 0.0)
+        out += amp * np.sin(TAU * h * ph + 1.7 * h * h)    # a different phase per harmonic, so it is not a buzzy pulse
+    if shimmer > 0.0:
+        out *= 1.0 + shimmer * smooth_noise(n, sr, 60.0, rng)
+    return out / (np.max(np.abs(out)) + 1e-9)
+
+
+def save_soft(name, x, rms_db=-20.0, max_peak=0.7):
+    """Animal and prop sounds are levelled by loudness rather than peak, so a long whinny isn't louder than a short bark,
+    and kept under full scale: they are background texture, about 3 dB quieter than the hits, and Race sets how loud each one is."""
+    x = np.asarray(x, dtype=np.float64)
+    x = x - np.mean(x)
+    scale = min(10 ** (rms_db / 20.0) / (np.sqrt(np.mean(x * x)) + 1e-12), max_peak / (np.max(np.abs(x)) + 1e-12))
+    save(name, x * scale, SR, norm=False)
+
+
+def build_animals():
+    """Short, dry, mono animal and prop sounds for Sfx.play_at. They are quiet on purpose: Race sets how loud each is."""
+
+    # ---- dog bark: a rough, quick 'wuff' with the pitch jumping up and settling
+    rng = rng_for("dog_bark")
+    n = int(0.28 * SR)
+    t = np.arange(n) / SR
+    f0 = contour(t, [(0, 330), (0.03, 480), (0.08, 410), (0.28, 290)])
+    voice = formant_voice(SR, f0, [(650, 280, 1.0), (1500, 420, 0.8), (2700, 800, 0.4)], tilt=0.8, jitter=0.05, shimmer=0.25, seed=3)
+    noise = peaking(peaking(unit(bp(rng.standard_normal(n), 400, 3800, SR)), 650, 1.4, 2.6, SR), 1500, 1.4, 2.0, SR)
+    env = np.minimum(1.0, t / 0.005) * np.exp(-t / 0.08)
+    save_soft("dog_bark", fade((unit(voice) + 0.5 * noise) * env, SR, 0.002, 0.04))
+
+    # ---- horse whinny: a rising squeal, a ragged fall, then a breathy nicker
+    rng = rng_for("whinny")
+    n = int(1.45 * SR)
+    t = np.arange(n) / SR
+    f0 = contour(t, [(0, 640), (0.12, 900), (0.3, 1180), (0.46, 1060), (0.72, 700), (0.9, 470), (1.02, 330), (1.45, 235)])
+    f0 = f0 * (1.0 + 0.028 * np.sin(TAU * 7.0 * t) * np.clip((t - 0.3) / 0.2, 0, 1) + 0.018 * smooth_noise(n, SR, 25.0, rng))
+    f1 = contour(t, [(0, 800), (0.4, 1100), (1.0, 650), (1.45, 600)])
+    f2 = contour(t, [(0, 2100), (0.4, 2700), (1.0, 1700), (1.45, 1300)])
+    voice = formant_voice(SR, f0, [(f1, 420, 1.0), (f2, 700, 0.7), (3600, 900, 0.2)], tilt=0.9, jitter=0.012, shimmer=0.15, seed=5)
+    breath = unit(hp(rng.standard_normal(n), 1400, SR)) * (0.1 + 0.5 * np.clip((t - 0.8) / 0.4, 0, 1))
+    nicker = np.where(t > 0.9, 0.55 + 0.45 * np.sin(TAU * 6.5 * t), 1.0)
+    env = np.minimum(1.0, t / 0.03) * np.clip((1.45 - t) / 0.4, 0, 1) ** 1.3
+    save_soft("whinny", fade((voice + 0.3 * breath) * env * nicker, SR, 0.003, 0.05))
+
+    # ---- horse snort: air pushed out of the nostrils, falling in pitch, with a second small puff
+    rng = rng_for("snort")
+    n = int(0.45 * SR)
+    t = np.arange(n) / SR
+    noise = rng.standard_normal(n)
+    out = np.zeros(n)
+    for i, c in enumerate((2400.0, 1500.0, 900.0, 520.0)):
+        out += unit(bp(noise, c * 0.6, c * 1.5, SR)) * np.exp(-((t - (0.03 + 0.06 * i)) / 0.055) ** 2) * (1.0 - 0.15 * i)
+    out += 0.5 * unit(bp(rng.standard_normal(n), 400, 1800, SR)) * np.exp(-((t - 0.25) / 0.05) ** 2)
+    out *= (0.78 + 0.22 * np.sin(TAU * 32.0 * t)) * np.minimum(1.0, t / 0.006)
+    save_soft("snort", fade(out, SR, 0.002, 0.08))
+
+    # ---- yak grunt: low and rough, two heavy pushes of breath
+    rng = rng_for("yak_grunt")
+    n = int(0.66 * SR)
+    t = np.arange(n) / SR
+    f0 = contour(t, [(0, 94), (0.18, 74), (0.22, 90), (0.5, 62), (0.66, 56)])
+    voice = formant_voice(SR, f0, [(330, 230, 1.0), (720, 360, 0.75), (1500, 520, 0.2)], tilt=0.7, jitter=0.05, shimmer=0.3, seed=7)
+    breath = unit(bp(rng.standard_normal(n), 150, 950, SR)) * 0.4
+    env = np.where(t < 0.2, np.sin(np.pi * np.clip(t / 0.2, 0, 1)) ** 0.8, 0.9 * np.sin(np.pi * np.clip((t - 0.2) / 0.38, 0, 1)) ** 0.8)
+    save_soft("yak_grunt", fade((voice + breath) * env, SR, 0.01, 0.06))
+
+    # ---- sheep bleat: a nasal 'meh' with the quaver bleats have
+    rng = rng_for("sheep_bleat")
+    n = int(0.85 * SR)
+    t = np.arange(n) / SR
+    f0 = contour(t, [(0, 300), (0.06, 430), (0.3, 405), (0.85, 320)])
+    f0 = f0 * (1.0 + 0.04 * np.sin(TAU * 30.0 * t))
+    voice = formant_voice(SR, f0, [(780, 260, 1.0), (1300, 320, 0.9), (2500, 520, 0.3)], tilt=0.9, jitter=0.02, seed=9)
+    am = 0.7 + 0.3 * np.sin(TAU * 30.0 * t + 0.6)
+    env = np.minimum(1.0, t / 0.03) * np.clip((0.85 - t) / 0.25, 0, 1) ** 1.2
+    save_soft("sheep_bleat", fade((voice + 0.1 * unit(bp(rng.standard_normal(n), 600, 3000, SR))) * am * env, SR, 0.003, 0.05))
+
+    # ---- mule bray: hee-haw, hee-haw
+    rng = rng_for("mule_bray")
+    n = int(1.8 * SR)
+    t = np.arange(n) / SR
+    f0 = contour(t, [(0, 720), (0.3, 1250), (0.34, 340), (0.8, 250), (0.86, 800), (1.12, 1060), (1.16, 310), (1.75, 205), (1.8, 200)])
+    f1 = contour(t, [(0, 380), (0.3, 360), (0.36, 700), (0.8, 650), (0.86, 380), (1.12, 380), (1.18, 700), (1.8, 650)])
+    f2 = contour(t, [(0, 2300), (0.3, 2500), (0.36, 1050), (0.8, 1000), (0.86, 2300), (1.12, 2400), (1.18, 1050), (1.8, 1000)])
+    voice = formant_voice(SR, f0, [(f1, 330, 1.0), (f2, 650, 0.8), (3300, 900, 0.2)], tilt=0.8, jitter=0.06, shimmer=0.3, seed=11)
+    breath = unit(bp(rng.standard_normal(n), 500, 4000, SR)) * 0.25
+    gate = np.where(((t > 0.31) & (t < 0.345)) | ((t > 0.83) & (t < 0.865)) | ((t > 1.13) & (t < 1.165)), 0.35, 1.0)
+    env = np.minimum(1.0, t / 0.04) * np.clip((1.8 - t) / 0.35, 0, 1) ** 1.2
+    save_soft("mule_bray", fade((voice + breath) * env * gate, SR, 0.004, 0.06))
+
+    # ---- crane call: a bright, nasal two-note trumpet
+    rng = rng_for("crane_call")
+    n = int(1.05 * SR)
+    t = np.arange(n) / SR
+    f0 = contour(t, [(0, 800), (0.1, 1010), (0.36, 960), (0.44, 890), (0.52, 990), (0.8, 760), (1.05, 640)])
+    f0 = f0 * (1.0 + 0.015 * np.sin(TAU * 11.0 * t))
+    voice = formant_voice(SR, f0, [(1500, 520, 1.0), (3000, 850, 0.7), (4400, 1100, 0.3)], tilt=0.6, jitter=0.01, seed=13)
+    rattle = 1.0 + 0.3 * np.sin(TAU * 58.0 * t) * np.clip((t - 0.5) / 0.1, 0, 1)
+    dip = 1.0 - 0.75 * np.exp(-((t - 0.4) / 0.025) ** 2)
+    env = np.minimum(1.0, t / 0.04) * np.clip((1.05 - t) / 0.3, 0, 1) ** 1.2
+    save_soft("crane_call", fade(voice * rattle * dip * env, SR, 0.004, 0.05))
+
+    # ---- marmot whistle: two quick clean chirps
+    rng = rng_for("marmot_whistle")
+    out = np.zeros(int(0.5 * SR))
+    for start, f1_, f2_ in ((0.0, 2500.0, 3300.0), (0.21, 2350.0, 3000.0)):
+        m = int(0.15 * SR)
+        tt = np.arange(m) / SR
+        f = f1_ + (f2_ - f1_) * (tt / 0.15) ** 0.7
+        tone = osc(f, SR) + 0.12 * osc(2.0 * f, SR)
+        mix_at(out, tone * np.sin(np.pi * np.clip(tt / 0.15, 0, 1)) ** 0.7, int(start * SR))
+    out += 0.03 * unit(hp(rng.standard_normal(len(out)), 3000, SR)) * (np.abs(out) > 0.05)
+    save_soft("marmot_whistle", fade(out, SR, 0.004, 0.03))
+
+    # ---- hat pop: a felt hat knocked off, a soft 'fwup'
+    rng = rng_for("hat_pop")
+    n = int(0.18 * SR)
+    t = np.arange(n) / SR
+    thump = osc(110.0 + 150.0 * np.exp(-t / 0.014), SR) * ex(n, 0.03, SR)
+    air = unit(bp(rng.standard_normal(n), 500, 2600, SR)) * ex(n, 0.02, SR) * np.minimum(1.0, t / 0.002)
+    save_soft("hat_pop", fade(0.9 * thump + 0.7 * air, SR, 0.001, 0.04))
+
+    # ---- near miss: something fast goes by, the pitch of its air sliding down as it passes
+    rng = rng_for("near_miss")
+    n = int(0.36 * SR)
+    t = np.arange(n) / SR
+    noise = rng.standard_normal(n)
+    out = np.zeros(n)
+    steps = 8
+    for i in range(steps):
+        c = 5200.0 * (0.28 ** (i / (steps - 1)))
+        pos = 0.2 + 0.55 * i / (steps - 1)
+        out += unit(bp(noise, c * 0.75, c * 1.3, SR)) * np.exp(-((t / 0.36 - pos) / 0.1) ** 2)
+    out *= np.sin(np.pi * np.clip(t / 0.36, 0, 1)) ** 1.4
+    out += 0.07 * osc(3600.0 - 2200.0 * (t / 0.36), SR) * np.sin(np.pi * np.clip(t / 0.36, 0, 1))
+    save_soft("near_miss", fade(out, SR, 0.01, 0.06))
+
+    # ---- harness bells: a shaken cluster of small brass bells and a couple of deeper ones
+    rng = rng_for("harness_bells")
+    n = int(1.15 * SR)
+    out = np.zeros(n)
+    for _ in range(11):
+        f = float(rng.choice([1500.0, 1750.0, 2150.0, 2600.0, 3100.0, 3500.0])) * rng.uniform(0.985, 1.015)
+        mix_at(out, bell_tone(SR, f, 0.45, (1.0, 2.76, 5.4), (1.0, 0.45, 0.2), 0.1), int(rng.uniform(0.0, 0.75) * SR), rng.uniform(0.3, 0.9))
+    for _ in range(3):
+        f = float(rng.choice([820.0, 960.0])) * rng.uniform(0.99, 1.01)
+        mix_at(out, bell_tone(SR, f, 0.6, (1.0, 2.4, 4.1), (1.0, 0.5, 0.25), 0.2), int(rng.uniform(0.0, 0.7) * SR), rng.uniform(0.4, 0.7))
+    save_soft("harness_bells", fade(out, SR, 0.001, 0.15))
 
 
 # ---------------------------------------------------------------- music
@@ -682,17 +871,23 @@ def check_pitch():
     return worst
 
 
+GROUPS = {"hooves": build_hooves, "sfx": build_sfx, "animals": build_animals, "music": build_music, "jingles": build_jingles}
+
+
 def main():
-    only = sys.argv[1:]
-    build_sfx()
-    build_music()
-    build_jingles()
+    names = sys.argv[1:] or list(GROUPS)
+    for g in names:
+        if g not in GROUPS:
+            raise SystemExit("unknown group %r, choose from %s" % (g, ", ".join(GROUPS)))
+    for g in names:
+        GROUPS[g]()
     print("%-16s %6s %6s %7s %7s %5s %7s %5s  bands %%: <250 <1k <4k >4k" % ("name", "sr", "sec", "peak", "rms", "clip", "KB", "seam"))
     total = 0.0
     for name, sr, dur, pk, rms, clip, kb, seam, bands in REPORT:
         total += kb
         print("%-16s %6d %6.2f %7.1f %7.1f %5d %7.0f %5s  %s" % (name, sr, dur, pk, rms, clip, kb, seam, bands))
-    print("total %.1f MB in %d files; karplus-strong worst pitch error %.1f cents" % (total / 1024.0, len(REPORT), check_pitch()))
+    extra = "; karplus-strong worst pitch error %.1f cents" % check_pitch() if "music" in names else ""
+    print("total %.1f MB in %d files%s" % (total / 1024.0, len(REPORT), extra))
 
 
 if __name__ == "__main__":

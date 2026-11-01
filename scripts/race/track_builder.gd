@@ -13,6 +13,7 @@ const NEAR_RADIUS := 300.0
 const FAR_CELL := 100.0
 const FAR_MARGIN := 3600.0
 const WATER_CELL := 3.5
+const ROAD_VERGE := 54.0 / 384.0      # the dark verge on each side of a road texture, from art/tools/make_road.py
 
 var track: Track
 var biome: Dictionary
@@ -288,26 +289,23 @@ func height_at(s: float, d: float) -> float:
 	return ground_y(p.x, p.z)
 
 
-## A lower bound on the distance from a world position to the nearest stretch of road.
-func dist_to_road(x: float, z: float) -> float:
+## The real distance from a world position to the nearest stretch of road: the raster says which samples to look at.
+func road_gap(x: float, z: float) -> float:
 	prepare()
 	var gx := int(floor((x - _origin.x) / CELL))
 	var gz := int(floor((z - _origin.y) / CELL))
 	if gx < 0 or gz < 0 or gx >= _nx - 1 or gz >= _nz - 1:
 		return 1e9
 	var k := gz * _nx + gx
-	var m := minf(minf(_dist[k], _dist[k + 1]), minf(_dist[k + _nx], _dist[k + _nx + 1]))
-	if m > 1e8:
-		return 1e9
-	return maxf(0.0, sqrt(m) - CELL * 0.72)
-
-
-## Index of the track sample nearest to a world position (from the raster, so approximate).
-func nearest_index(x: float, z: float) -> int:
-	prepare()
-	var gx := clampi(int(floor((x - _origin.x) / CELL)), 0, _nx - 1)
-	var gz := clampi(int(floor((z - _origin.y) / CELL)), 0, _nz - 1)
-	return _near_i[gz * _nx + gx]
+	var best := 1e18
+	for corner: int in [k, k + 1, k + _nx, k + _nx + 1]:
+		if _dist[corner] > 1e8:
+			continue
+		var i := _near_i[corner]
+		for j in range(maxi(i - 7, 0), mini(i + 8, track.count)):
+			var q := track.positions[j]
+			best = minf(best, (q.x - x) * (q.x - x) + (q.z - z) * (q.z - z))
+	return sqrt(best) if best < 1e17 else 1e9
 
 
 ## Rough nearest track point for places outside the corridor. Returns (signed d, road height).
@@ -569,9 +567,11 @@ func _build_road(parent: Node3D, mat: Material) -> void:
 	var cols := PackedColorArray()
 	var skirt: float = biome.get("road_skirt", 4.5)
 	var hw0: float = biome.get("half_width", 11.0)
-	# The texture spans the whole ribbon once across and repeats along it; one tile is as long as it is wide, so
-	# pixels stay square on the ground.
-	var tile_len: float = biome.get("road_tile", (hw0 + skirt) * 2.0)
+	# The texture's dark verge always sits on the skirt, however wide the road, so its painted edge is the real edge.
+	# It repeats along the road at the length that keeps its pixels square on the riding surface.
+	var tile_len: float = biome.get("road_tile", 2.0 * hw0 / (1.0 - 2.0 * ROAD_VERGE))
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("tile_len", tile_len)
 	var step := 2
 	var i := 0
 	while i < track.count - step:
@@ -583,11 +583,7 @@ func _build_road(parent: Node3D, mat: Material) -> void:
 		var offsets0 := [-w0 - skirt, -w0, w0, w0 + skirt]
 		var offsets1 := [-w1 - skirt, -w1, w1, w1 + skirt]
 		var drops := [-0.75, 0.0, 0.0, -0.75]
-		# Edge of road and verge as fractions of the texture width, so the dark verge sits on the skirt.
-		var f0 := skirt / (2.0 * (w0 + skirt))
-		var f1 := skirt / (2.0 * (w1 + skirt))
-		var us0 := [0.0, f0, 1.0 - f0, 1.0]
-		var us1 := [0.0, f1, 1.0 - f1, 1.0]
+		var us := [0.0, ROAD_VERGE, 1.0 - ROAD_VERGE, 1.0]
 		for q in 3:
 			var a := track.positions[i] + track.rights[i] * float(offsets0[q]) + Vector3.UP * (0.02 + float(drops[q]))
 			var b := track.positions[i] + track.rights[i] * float(offsets0[q + 1]) + Vector3.UP * (0.02 + float(drops[q + 1]))
@@ -598,12 +594,12 @@ func _build_road(parent: Node3D, mat: Material) -> void:
 			for v in [a, c, b, b, c, d]:
 				verts.append(v)
 				cols.append(Color.WHITE)
-			uvs.append(Vector2(float(us0[q]), v0))
-			uvs.append(Vector2(float(us1[q]), v1))
-			uvs.append(Vector2(float(us0[q + 1]), v0))
-			uvs.append(Vector2(float(us0[q + 1]), v0))
-			uvs.append(Vector2(float(us1[q]), v1))
-			uvs.append(Vector2(float(us1[q + 1]), v1))
+			uvs.append(Vector2(float(us[q]), v0))
+			uvs.append(Vector2(float(us[q]), v1))
+			uvs.append(Vector2(float(us[q + 1]), v0))
+			uvs.append(Vector2(float(us[q + 1]), v0))
+			uvs.append(Vector2(float(us[q]), v1))
+			uvs.append(Vector2(float(us[q + 1]), v1))
 		i = j
 	var mi := _mesh_instance(verts, cols, uvs, mat, "Road")
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

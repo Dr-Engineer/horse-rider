@@ -291,7 +291,7 @@ func _paint() -> void:
 				desc = str(w.get("desc", "")).to_upper()
 				y = _wrapped(c, desc, x, y + 4, 270.0, UI.CONCH) + 6
 				var ranged := kind == "ranged"
-				var dmax := 9.0 if ranged else 18.0
+				var dmax := 15.0 if ranged else 25.2
 				var imax := 12.0 if ranged else 38.0
 				var rmax := 45.0 if ranged else 4.0
 				_bar_line(c, x, y, "DAMAGE", float(w.damage), dmax, float(cur_w.damage), "%.0f")

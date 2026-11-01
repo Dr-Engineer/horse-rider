@@ -4,17 +4,17 @@ extends RefCounted
 ## Display text is plain capitals in the headline font's alphabet (no semicolons, ampersands or curly quotes).
 
 const WEAPONS := {
-	"fists": {"name": "FISTS", "klass": "body", "damage": 5, "impact": 10, "reach": 1.9, "swing": 0.33, "cost": 0, "ammo": 0, "desc": "ALWAYS WITH YOU."},
-	"kick": {"name": "KICK", "klass": "body", "damage": 6, "impact": 20, "reach": 2.1, "swing": 0.5, "cost": 0, "ammo": 0, "desc": "SHOVES THE TARGET SIDEWAYS."},
-	"knife": {"name": "KNIFE", "klass": "melee", "damage": 10, "impact": 8, "reach": 2.0, "swing": 0.3, "cost": 80, "ammo": 0, "desc": "THE FASTEST BLADE."},
-	"pencase": {"name": "PEN CASE", "klass": "melee", "damage": 7, "impact": 20, "reach": 2.1, "swing": 0.42, "cost": 40, "ammo": 0, "desc": "GRAVEL-FILLED. CHEAP AND COMIC."},
-	"whip": {"name": "WHIP", "klass": "melee", "damage": 6, "impact": 15, "reach": 3.0, "swing": 0.34, "cost": 120, "ammo": 0, "desc": "LONG AND QUICK."},
-	"sword": {"name": "SWORD", "klass": "melee", "damage": 18, "impact": 24, "reach": 2.6, "swing": 0.55, "cost": 450, "ammo": 0, "desc": "THE BEST ALL-ROUNDER."},
-	"key": {"name": "IRON KEY", "klass": "melee", "damage": 15, "impact": 38, "reach": 3.5, "swing": 0.7, "cost": 700, "ammo": 0, "desc": "OUTREACHES SWORDS. WEAK UP CLOSE."},
-	"spear": {"name": "SPEAR", "klass": "melee", "damage": 16, "impact": 34, "reach": 4.0, "swing": 0.75, "cost": 600, "ammo": 0, "desc": "AT A FULL GALLOP, +25% IMPACT."},
-	"sling": {"name": "SLING", "klass": "ranged", "damage": 3, "impact": 6, "reach": 28.0, "swing": 0.8, "cost": 60, "ammo": 99, "desc": "PLENTIFUL STONES. HARASSES ONLY."},
-	"bow": {"name": "BOW", "klass": "ranged", "damage": 7, "impact": 8, "reach": 45.0, "swing": 1.0, "cost": 500, "ammo": 12, "desc": "DRAW TO AIM. +30% AT FULL DRAW."},
-	"roped_spear": {"name": "ROPED SPEAR", "klass": "ranged", "damage": 9, "impact": 12, "reach": 18.0, "swing": 1.1, "cost": 900, "ammo": 0, "desc": "THROWN, THEN HAULED BACK. NO AMMO."},
+	"fists": {"name": "FISTS", "klass": "body", "damage": 8.4, "impact": 10, "reach": 1.9, "swing": 0.33, "cost": 0, "ammo": 0, "desc": "ALWAYS WITH YOU, AND NO SHOVE."},
+	"kick": {"name": "KICK", "klass": "body", "damage": 4.2, "impact": 20, "reach": 2.1, "swing": 0.62, "cost": 0, "ammo": 0, "desc": "LANDS LATE AND SLOWS YOUR HORSE, BUT SHOVES THE TARGET AWAY."},
+	"knife": {"name": "KNIFE", "klass": "melee", "damage": 14, "impact": 8, "reach": 2.0, "swing": 0.3, "cost": 80, "ammo": 0, "desc": "THE FASTEST BLADE."},
+	"pencase": {"name": "PEN CASE", "klass": "melee", "damage": 9.8, "impact": 20, "reach": 2.1, "swing": 0.42, "cost": 40, "ammo": 0, "desc": "GRAVEL-FILLED. CHEAP AND COMIC."},
+	"whip": {"name": "WHIP", "klass": "melee", "damage": 8.4, "impact": 15, "reach": 3.0, "swing": 0.34, "cost": 120, "ammo": 0, "desc": "LONG AND QUICK."},
+	"sword": {"name": "SWORD", "klass": "melee", "damage": 25.2, "impact": 24, "reach": 2.6, "swing": 0.55, "cost": 450, "ammo": 0, "desc": "THE BEST ALL-ROUNDER."},
+	"key": {"name": "IRON KEY", "klass": "melee", "damage": 21, "impact": 38, "reach": 3.5, "swing": 0.7, "cost": 700, "ammo": 0, "desc": "OUTREACHES SWORDS. WEAK UP CLOSE."},
+	"spear": {"name": "SPEAR", "klass": "melee", "damage": 22.4, "impact": 34, "reach": 4.0, "swing": 0.75, "cost": 600, "ammo": 0, "desc": "AT A FULL GALLOP, +25% IMPACT."},
+	"sling": {"name": "SLING", "klass": "ranged", "damage": 5.6, "impact": 6, "reach": 28.0, "swing": 0.8, "cost": 60, "ammo": 297, "desc": "PLENTIFUL STONES. HARASSES ONLY."},
+	"bow": {"name": "BOW", "klass": "ranged", "damage": 11.9, "impact": 8, "reach": 45.0, "swing": 1.0, "cost": 500, "ammo": 36, "desc": "DRAW TO AIM. +30% AT FULL DRAW."},
+	"roped_spear": {"name": "ROPED SPEAR", "klass": "ranged", "damage": 14.7, "impact": 12, "reach": 27.0, "swing": 1.1, "cost": 900, "ammo": 0, "desc": "THROWN, THEN HAULED BACK. NO AMMO."},
 }
 
 const HORSES := {

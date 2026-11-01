@@ -3,9 +3,98 @@
 The contract between parallel workstreams. Stick to these names. If you must change one, change it here too and say
 so in your final report.
 
-## File ownership
+## Round 2: polish, voices and fun (current ownership)
 
-Only edit files you own. If you need something from another stream, code against this contract.
+Only edit files you own. Code against the contract below for anything another stream owns. Missing sounds, lines and
+props are skipped quietly, so you never need to wait for another stream to finish. This table replaces the older one below.
+
+| Stream | Owns |
+|---|---|
+| **Art** | `art/blender/`, `assets/models/`, `art/tools/atlas*.py`, `make_atlas.py`, `make_road.py`, `assets/atlas/`, `shaders/`, `data/courses.gd`, `scripts/core/art_kit.gd`, `scripts/race/hazards.gd` (visuals only, the simulation stays as it is), `track_builder.gd`, `track_dressing.gd`, `track.gd`, `tests/hazard_view.*`, `lookdev.*`, `track_view.*` |
+| **Audio** | `art/tools/make_voices.py`, `voice_script.py`, `voice_lines_game.json`, `make_audio.py`, `assets/audio/`, `data/voice_bank.gd`, `docs/VOICE_SCRIPT.md`, `scripts/core/sfx.gd`, `tools/spectrogram.py`, `tools/export_lines.gd`, `tests/mix_check.*` |
+| **Race** | `scripts/race/race.gd`, `rider.gd`, `rider_ai.gd`, `rider_visual.gd`, `camera_rig.gd`, `fx.gd`, `player_control.gd`, `projectile.gd`, new `chatter.gd`, `life.gd`, `flair.gd`, `data/game_data.gd`, `scenes/race.tscn`, `tests/sim_balance.*`, `autoplay.*` |
+| **UI** | `scripts/core/game.gd`, `input_setup.gd`, `scripts/ui/` (including `story_text.gd`), `scenes/` except `race.tscn`, `project.godot`, `art/tools/make_font.py`, `make_ui_icons.py`, `assets/fonts/`, `assets/ui/`, `tools/make_portraits.*`, `ui_walkthrough.gd` |
+| **Coordinator** | Everything else: `docs/` apart from `VOICE_SCRIPT.md`, `README.md`, `CLAUDE.md`, git. Nobody else commits. |
+
+### Voices (Audio provides, in `Sfx`)
+
+```
+Sfx.say(speaker: String, category: String, world_pos: Variant = null, volume_db := 0.0, lang := "") -> Dictionary
+    Speaks a random line for that speaker and category, avoiding recent repeats. world_pos is a Vector3 for a positioned
+    voice, or null for a flat one. lang "bo" or "en" forces a language, "" follows Game.voice_language. Returns the line
+    {f, t, g, l, d} (file, subtitle text, English gloss for Tibetan lines, "en"/"bo", seconds), or {} if nothing played.
+Sfx.say_text(speaker: String, text: String, volume_db := 0.0) -> float
+    Speaks an exact line the menus show, by file name "<speaker>_<first 8 hex of md5 of text>.ogg". Returns seconds, or 0.0.
+Sfx.stop_voice(), Sfx.voice_playing() -> bool, Sfx.set_voice_volume(0..1), var Sfx.voice_volume
+```
+
+Voices play on a `Voice` bus and duck the music while speaking. Speakers are rival ids, `joru`, `yangkyi`, `pola`, `mola`,
+`child`, `steward`, `starter`. Categories are listed at the top of `art/tools/voice_script.py`: `pass_by, passed, hit_you,
+hurt, down, gloat, near, hat, cry, win, start, scarf`; player rider `p_hurt, p_down, p_knock, p_remount, p_wind, p_cry,
+p_scarf, p_win, p_lose`; `steward` has `fine, quiet`; `starter` has `ready, three, two, one, go`; `child` has `and_then`;
+`pola` and `mola` have `greet, saying`.
+
+`data/voice_bank.gd` is generated, `class_name VoiceBank`: `LINES[speaker][category]` is an array of those line
+dictionaries, `SAYINGS: Array[String]` holds the old rider's sayings, and `PHRASES: Array` holds one entry per distinct
+Tibetan phrase as `{t, g, f, speaker}` for the phrasebook.
+
+New one-shot sounds through `Sfx.play` or `Sfx.play_at`: `cheer_kiki, cheer_lha, cheer_shuk, cheer_ala` (crowd shouts,
+stored in `assets/audio/voice/`), `dog_bark, whinny, snort, yak_grunt, sheep_bleat, mule_bray, crane_call, marmot_whistle,
+hat_pop, near_miss, harness_bells`. Unknown names are ignored, so code against them freely.
+
+### Settings (UI provides, in `Game`)
+
+`Game.voice_volume` (0..1, default 0.85) and `Game.voice_language` (0 both, 1 Tibetan, 2 English) are saved in the settings
+file. **If the file exists but has no voice key, voice_volume starts at 0 when sfx is 0**, so a player who muted the game
+stays muted. Never write to the settings file from a test.
+
+### Chatter and stats (Race provides)
+
+```
+Race.chatter signal: chatter(rider: Rider, line: Dictionary)   # rider may be null for the starter or a steward
+    line is what Sfx.say returned, plus "speaker": the speaker id. The HUD shows it as a subtitle for d + 1 seconds.
+Race.chatter_node (Chatter), Race.life (Life): visuals-only helpers, never created when headless.
+Rider.hats_knocked, near_misses, overtakes, best_streak: int. to_result() also carries "hats", "near_misses", "overtakes", "best_streak".
+    Silver for these goes into Rider.silver_bonus, so Game's ledger picks it up with no change.
+```
+
+Everything Chatter, Life and Flair do is visual or audio: they use their own RandomNumberGenerator and never touch
+`Race.rng`, so `tests/sim_balance` stays deterministic and its rules still hold. Stat counting happens only when not headless.
+
+### Art helpers (Art provides, in `ArtKit`)
+
+```
+ArtKit.prop_walker(name) -> Node3D      # a prop whose legs can swing (yak, mule, sheep, dog, kiang)
+ArtKit.set_stride(node, phase: float, amp: float)   # phase in radians (grows with distance walked), amp 0..1 (0 = still)
+```
+
+`Hazards` uses these for its movers. Race's `Life` uses them for roadside animals.
+
+### Rules for every stream
+
+- **No windows:** Godot must never appear on the user's screen or take focus while they work. Anything that needs pixels goes
+  through `tools/run_hidden.ps1`, which uses an invisible desktop. Anything else uses `--headless`.
+- **Silence:** every Godot run passes `--audio-driver Dummy`, which `run_hidden.ps1` and `--headless` already do. The user found
+  the game too loud and has muted it on this PC. Never touch that settings file.
+- Run imports through `tools/godot_import.sh` from Git Bash with `GODOT` set, so two imports can't collide.
+- Keep files you save parse-clean: others are running the game at the same time. If a file you don't own has an error, wait a
+  minute and retry, and report it if it stays broken. Don't fix it.
+- No git writes. No new downloads beyond the installed voice tools.
+
+### Added during round 2 (additive, on top of the contract above)
+
+- `Sfx.say` also takes a Node3D or a Callable for `world_pos`, for a voice that follows a moving rider. With voices muted it still returns the line, so
+  subtitles keep working. `Sfx.say_file(file, db)` plays one voice file by name. `Sfx.say_text` returns the line's length even when muted.
+- `Race`: `note_hat(victim, by)`, `flair`, `terrain`. New `rider_event` kinds: `count`, `mud`, `hat`, `thud`. The countdown is 5.0 s with visuals and 3.6 s headless.
+- `Rider`: `hat_off`, `hat_piece()`. Finished riders keep their lanes and spread apart.
+- `RiderVisual.cadence(gait, speed, top)` replaces `GAIT_REF` and sets strides per second. `Sfx.set_gallop` and the hoof loops in `make_audio.py` follow it (`Sfx.LOOP_HZ`).
+- `Game`: `settings_path`, `go(key, keep_voice)`, and the wager: `wager`, `wager_rival`, `wager_stake()`, `place_wager()`, `clear_wager()`. `last_result` gains `wager`,
+  `wager_rival`, `wager_won`, `hats`, `near_misses`, `overtakes`, `best_streak`. `WINDHORSE_SETTINGS` in the environment names the settings file. `scripts/ui/speak.gd` guards every voice call from the menus.
+- `ArtKit`: `WALKERS`, `walker_stride_length`, `mud_material`, `crowd_material`. Course `env` also takes `cloud_scale`, `cloud_light`, `cloud_shade`, `sun_size`, `sky_mid`.
+- `VoiceBank.PHRASES` entries also carry `bo` and `d`.
+- `tests/hazard_view` takes five more arguments (back, camera height, look height, tag, seconds of simulation). `tests/prop_view` shows walk poses.
+
+## Round 1 ownership (history)
 
 | Stream | Owns |
 |---|---|

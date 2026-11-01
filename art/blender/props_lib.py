@@ -182,6 +182,13 @@ def sink(b, z, start=0):
             b.co[i].z = z
 
 
+def settle(b, sink_z=0.15, start=0):
+    """Sets whatever was built from `start` on down on the ground, with its lowest point a little under it. blob's cut flattens
+    a bottom but leaves it above the origin, so a rock built that way hovers unless it's settled."""
+    low = min(b.co[i].z for i in range(start, len(b.co)))
+    shift(b, dz=-sink_z - low, start=start)
+
+
 def shift(b, dx=0.0, dy=0.0, dz=0.0, start=0, end=None):
     end = len(b.co) if end is None else end
     for i in range(start, end):
@@ -276,13 +283,22 @@ def add_hang_uv2(obj, hangs):
     for poly in mesh.polygons:
         for li in poly.loop_indices:
             v = mesh.loops[li].vertex_index
-            layer.data[li].uv = (hangs[v] if v < len(hangs) else 0.0, 0.0)
+            h = hangs[v] if v < len(hangs) else 0.0
+            layer.data[li].uv = tuple(h) if isinstance(h, (tuple, list)) else (h, 0.0)
 
 
 # --- export -----------------------------------------------------------------------------------------------------
 
+def wanted(name):
+    """PROPS_ONLY=ramp,scarf limits a props script to those exports (every other one is skipped)."""
+    only = os.environ.get("PROPS_ONLY", "").strip()
+    return not only or name in [n.strip() for n in only.split(",")]
+
+
 def export(name, parts):
     """parts: list of (object_name, builder) or (object_name, builder, hangs). Exports props/<name>.glb."""
+    if not wanted(name):
+        return
     kit.clear_scene()
     objs = []
     for part in parts:

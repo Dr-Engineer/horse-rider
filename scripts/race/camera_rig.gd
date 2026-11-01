@@ -2,6 +2,8 @@ class_name CameraRig
 extends Node3D
 ## Chase camera: FOV widens with speed, leans into curves, shakes with impacts and the shake meter,
 ## hit-stop on heavy hits, short slow motion on a knockdown near the player, and a crash camera that follows the thrown rider.
+## When the player crosses the line there is a beat of slow motion and the camera swings round the rider in an orbit.
+## All time scaling is keyed to the real clock, so it always ends; _exit_tree and reset_time put it back to 1.
 
 var race: Race
 var track: Track
@@ -25,6 +27,8 @@ var _t := 0.0
 var _inited := false
 var intro_t := 0.0
 var lines: CPUParticles3D = null
+var punch := 0.0                # a quick FOV kick (negative zooms in) that fades out
+var _fin_t := -1.0              # seconds since the player crossed the line, -1 while racing
 
 
 func bind(p_race: Race) -> void:
@@ -99,13 +103,18 @@ func _on_hit(attacker: Rider, victim: Rider, info: Dictionary) -> void:
 	if target == null:
 		return
 	var impact: float = info.get("impact", 0.0)
+	var knocked: bool = info.get("crashed", false)
 	if victim == target:
 		shake_amp = minf(shake_amp + impact * 0.012, 0.7)
 		if impact >= 14.0 and not info.get("blocked", false):
-			_hit_stop(50 + int(minf(impact, 40.0) * 0.6))
+			_hit_stop(100 if knocked else 50 + int(minf(impact, 40.0) * 0.6))
 	elif attacker == target and impact >= 20.0 and not info.get("blocked", false):
 		shake_amp = minf(shake_amp + impact * 0.006, 0.4)
-		_hit_stop(45 + int(minf(impact, 40.0) * 0.5))
+		_hit_stop(120 if knocked else 45 + int(minf(impact, 40.0) * 0.5))
+		if knocked:
+			# the crunch of a knockdown: freeze, a hard shake and the lens snaps in
+			shake_amp = minf(shake_amp + 0.3, 0.7)
+			punch = -7.0
 
 
 func _on_crashed(r: Rider, reason: String) -> void:
@@ -127,6 +136,14 @@ func _on_event(kind: String, r: Rider, _info: Dictionary) -> void:
 				shake_amp = minf(shake_amp + 0.25, 0.5)
 			"land":
 				shake_amp = minf(shake_amp + 0.08, 0.3)
+			"mud":
+				shake_amp = minf(shake_amp + 0.16, 0.5)
+				punch = 2.5
+			"thud":
+				shake_amp = minf(shake_amp + 0.3, 0.7)
+			"finish":
+				_fin_t = 0.0
+				_slow_mo(0.4, 850)
 
 
 func _hit_stop(ms: int) -> void:
@@ -153,6 +170,9 @@ func _process(dt: float) -> void:
 		Engine.time_scale = 1.0
 	var real_dt: float = dt / maxf(Engine.time_scale, 0.04)
 	_t += real_dt
+	if _fin_t >= 0.0:
+		_fin_t += real_dt
+	punch = lerpf(punch, 0.0, 1.0 - exp(-minf(real_dt, 0.05) / 0.16))
 	_apply(minf(real_dt, 0.05))
 
 
@@ -164,7 +184,7 @@ func _apply(dt: float) -> void:
 	var spd := r.speed
 	var top: float = r.horse["speed"]
 	var f_speed := clampf(spd / maxf(top, 1.0), 0.0, 1.3)
-	var focus_s := r.s + (spd * fr if r.is_riding() else 0.0)
+	var focus_s := r.s + (spd * fr if (r.is_riding() or r.state == "finished") else 0.0)
 	var focus_d := r.d
 	if r.state == "mount" or r.state == "run":
 		focus_s = r.s
@@ -174,6 +194,9 @@ func _apply(dt: float) -> void:
 	var want_s := focus_s - back
 	var want_d := focus_d * 0.8
 	var want_h := height + r.height * 0.6
+	# drawing a shot: the camera rises a little to see past the rider's own head
+	if r.drawing:
+		want_h += 0.8 * r.draw_amount
 	var look_ahead := 8.0 + f_speed * 5.0
 	var want_ls := focus_s + look_ahead
 	var want_ld := focus_d * 0.92
@@ -196,6 +219,22 @@ func _apply(dt: float) -> void:
 	cam_s = clampf(cam_s, focus_s - back - 3.0, focus_s - 2.0)
 	var pos := track.point(cam_s, cam_d, cam_h)
 	var look := track.point(look_s, look_d, look_h)
+	var fin := 0.0
+	if _fin_t >= 0.0 and r.state == "finished":
+		# the finish: circle the rider, starting from where the chase camera is, and look at the chest
+		fin = smoothstep(0.0, 0.9, _fin_t)
+		var hs := r.horse_s + r.horse_speed * fr
+		var centre := track.point(hs, r.d, 1.2)
+		var tf := track.frame(hs, r.d, 0.0)
+		var ang := _fin_t * 0.62
+		var radius := 5.4 + 1.4 * smoothstep(0.0, 2.5, _fin_t)
+		var ring := (tf.basis.z * cos(ang) + tf.basis.x * sin(ang)) * radius
+		var orbit := centre + ring + Vector3.UP * (1.7 + 0.45 * sin(_fin_t * 0.8))
+		if race.terrain != null:
+			var ground: float = race.terrain.call("ground_y", orbit.x, orbit.z)
+			orbit.y = maxf(orbit.y, ground + 1.3)
+		pos = pos.lerp(orbit, fin)
+		look = look.lerp(centre + Vector3(0.0, 0.1, 0.0), fin)
 	# shake
 	var meter := clampf(r.shake / 100.0, 0.0, 1.0)
 	var amp := shake_amp + meter * meter * 0.06 + f_speed * 0.012
@@ -205,18 +244,23 @@ func _apply(dt: float) -> void:
 	cam.look_at(look + off * 0.3, Vector3.UP)
 	# lean into the curve
 	var kappa := track.curve_at(focus_s)
-	var roll_target := clampf(-kappa * spd * spd * 0.0055, -0.1, 0.1) - clampf(r.lateral * 0.0035, -0.04, 0.04)
+	var roll_target := (clampf(-kappa * spd * spd * 0.0055, -0.1, 0.1) - clampf(r.lateral * 0.0035, -0.04, 0.04)) * (1.0 - fin)
 	roll = lerpf(roll, roll_target, 1.0 - exp(-dt / 0.25)) if dt > 0.0 else roll_target
 	cam.rotate_object_local(Vector3(0, 0, 1), roll + off.x * 0.02)
-	# FOV widens with speed, extra when whipping or in Second Wind
+	# FOV widens with speed, extra when whipping, in Second Wind or riding the slipstream; narrower for the finish orbit
 	var fov_t := 58.0 + 14.0 * clampf(f_speed, 0.0, 1.2)
 	if r.whip_on:
 		fov_t += 3.0
 	if r.second_wind_t > 0.0:
 		fov_t += 5.0
+	fov_t += 3.5 * r.draft
+	# the view tightens as a shot is drawn
+	if r.drawing:
+		fov_t -= 9.0 * r.draw_amount
+	fov_t = lerpf(fov_t, 50.0, fin)
 	fov = lerpf(fov, fov_t, 1.0 - exp(-dt / 0.3)) if dt > 0.0 else fov_t
-	cam.fov = fov
+	cam.fov = fov + punch
 	if lines != null:
-		var go := f_speed > 0.82 or r.whip_on or r.second_wind_t > 0.0
+		var go := f_speed > 0.82 or r.whip_on or r.second_wind_t > 0.0 or r.draft > 0.6
 		lines.emitting = go and r.is_riding()
 		lines.amount = 34 if (r.whip_on or r.second_wind_t > 0.0) else 22

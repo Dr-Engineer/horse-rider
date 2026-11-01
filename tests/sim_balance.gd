@@ -419,6 +419,7 @@ func races(n: int, season: int, seed0: int, verbose: bool) -> void:
 	var blocked := 0
 	var parried := 0
 	var swings := 0
+	var slam_strikes := 0
 	var shots := 0
 	var snatched := 0
 	var dropped := 0
@@ -491,6 +492,7 @@ func races(n: int, season: int, seed0: int, verbose: bool) -> void:
 		blocked += int(race.stats["blocked"])
 		parried += int(race.stats["parried"])
 		swings += int(race.stats["swings"])
+		slam_strikes += int(race.stats.get("slam_strikes", 0))
 		shots += int(race.stats["shots"])
 		snatched += int(race.stats["snatched"])
 		dropped += int(race.stats["dropped"])
@@ -509,6 +511,7 @@ func races(n: int, season: int, seed0: int, verbose: bool) -> void:
 	for k: String in dmg:
 		print("  %-6s hits %4d  damage %7.1f  avg/hit %.2f  impact avg/hit %.2f" % [k, hits[k], dmg[k], dmg[k] / float(maxi(int(hits[k]), 1)), imps[k] / float(maxi(int(hits[k]), 1))])
 	print("swings %d shots %d blocked %d parried %d snatched %d dropped %d  second winds %d  avg lungta at end %.2f" % [swings, shots, blocked, parried, snatched, dropped, second_winds, lungta_sum / float(maxi(n * 8, 1))])
+	print("slam strikes (x1.5): %d of %d melee and body hits" % [slam_strikes, int(hits["melee"]) + int(hits["body"])])
 	print("player-equivalent AI places: ", player_places, " avg %.2f" % _avgi(player_places))
 	print("winners: ", wins)
 	print("per rider (avg place, knockdowns dealt, crashes taken, hits landed per race):")
@@ -524,7 +527,8 @@ func races(n: int, season: int, seed0: int, verbose: bool) -> void:
 		var r_imp: float = imps["ranged"] / float(hits["ranged"])
 		var m_imp: float = imps["melee"] / float(hits["melee"])
 		# per-hit damage depends on the weapon mix (whips and pen cases are weak melee), so allow a little slack there
-		check(r_avg < m_avg * 1.15 and r_avg < 9.2, "ranged damage per hit %.2f should be below melee %.2f" % [r_avg, m_avg])
+		check(r_avg < m_avg * 1.15 and r_avg < 15.5, "ranged damage per hit %.2f should be below melee %.2f" % [r_avg, m_avg])
+		check(float(slam_strikes) < 0.12 * float(int(hits["melee"]) + int(hits["body"])), "x1.5 strikes should be rare: %d of %d hits" % [slam_strikes, int(hits["melee"]) + int(hits["body"])])
 		check(r_imp < m_imp, "ranged impact per hit %.2f should be below melee %.2f" % [r_imp, m_imp])
 	if n >= 4:
 		check(_avg(win_times) > 90.0 and _avg(win_times) < 230.0, "race length should be about 2-3 minutes, got %.1f" % _avg(win_times))

@@ -6,18 +6,18 @@ extends RefCounted
 # klass: "body" | "melee" | "ranged". reach in metres, swing in seconds.
 # Ranged extras: draw (s to full draw), min_draw, speed (projectile m/s), ammo (-1 = unlimited).
 const WEAPONS := {
-	"fists": {"name": "Fists", "tibetan": "", "klass": "body", "damage": 5.0, "impact": 10.0, "reach": 1.9, "swing": 0.33, "cost": 0, "ammo": -1, "model": "", "desc": "Always available."},
-	"kick": {"name": "Kick", "tibetan": "", "klass": "body", "damage": 6.0, "impact": 20.0, "reach": 2.1, "swing": 0.5, "cost": 0, "ammo": -1, "model": "", "desc": "Shoves the target sideways."},
-	"barge": {"name": "Barge", "tibetan": "", "klass": "body", "damage": 4.0, "impact": 18.0, "reach": 0.0, "swing": 0.0, "cost": 0, "ammo": -1, "model": "", "desc": "Scales with sideways speed and horse bulk."},
-	"knife": {"name": "Knife", "tibetan": "gri", "klass": "melee", "damage": 10.0, "impact": 8.0, "reach": 2.0, "swing": 0.3, "cost": 60, "ammo": -1, "model": "knife", "desc": "Fastest blade."},
-	"pencase": {"name": "Pen case", "tibetan": "", "klass": "melee", "damage": 7.0, "impact": 20.0, "reach": 2.1, "swing": 0.42, "cost": 40, "ammo": -1, "model": "pencase", "desc": "Gravel-filled, cheap and comic."},
-	"whip": {"name": "Whip", "tibetan": "", "klass": "melee", "damage": 6.0, "impact": 15.0, "reach": 3.0, "swing": 0.34, "cost": 120, "ammo": -1, "model": "whip", "desc": "Long and quick."},
-	"sword": {"name": "Sword", "tibetan": "ral gri", "klass": "melee", "damage": 18.0, "impact": 24.0, "reach": 2.6, "swing": 0.55, "cost": 450, "ammo": -1, "model": "sword", "desc": "Best all-round."},
-	"key": {"name": "Iron key", "tibetan": "lde brdzus", "klass": "melee", "damage": 15.0, "impact": 38.0, "reach": 3.5, "swing": 0.7, "cost": 650, "ammo": -1, "model": "key", "desc": "On a thong. Outreaches swords, weak up close."},
-	"spear": {"name": "Spear", "tibetan": "mdung", "klass": "melee", "damage": 16.0, "impact": 34.0, "reach": 4.0, "swing": 0.75, "cost": 700, "ammo": -1, "model": "spear", "desc": "At a full gallop, +25% impact."},
-	"sling": {"name": "Sling", "tibetan": "'ur rdo", "klass": "ranged", "damage": 3.0, "impact": 6.0, "reach": 28.0, "swing": 0.8, "cost": 80, "ammo": 99, "model": "sling", "draw": 0.5, "min_draw": 0.3, "speed": 42.0, "desc": "Side-swung, plentiful stones."},
-	"bow": {"name": "Bow", "tibetan": "gzhu", "klass": "ranged", "damage": 7.0, "impact": 8.0, "reach": 45.0, "swing": 0.9, "cost": 520, "ammo": 12, "model": "bow", "draw": 0.9, "min_draw": 0.25, "speed": 70.0, "desc": "Draw to aim, +30% at full draw."},
-	"roped_spear": {"name": "Roped spear", "tibetan": "thag mdung", "klass": "ranged", "damage": 9.0, "impact": 12.0, "reach": 18.0, "swing": 1.1, "cost": 900, "ammo": -1, "model": "roped_spear", "draw": 0.35, "min_draw": 0.2, "speed": 38.0, "desc": "Thrown then hauled back, no ammo."},
+	"fists": {"name": "Fists", "tibetan": "", "klass": "body", "damage": 8.4, "impact": 10.0, "reach": 1.9, "swing": 0.33, "cost": 0, "ammo": -1, "model": "", "desc": "Always available, and no shove."},
+	"kick": {"name": "Kick", "tibetan": "", "klass": "body", "damage": 4.2, "impact": 20.0, "reach": 2.1, "swing": 0.62, "cost": 0, "ammo": -1, "model": "", "desc": "Lands late and slows your horse, but shoves the target away."},
+	"barge": {"name": "Barge", "tibetan": "", "klass": "body", "damage": 5.6, "impact": 18.0, "reach": 0.0, "swing": 0.0, "cost": 0, "ammo": -1, "model": "", "desc": "Scales with sideways speed and horse bulk."},
+	"knife": {"name": "Knife", "tibetan": "gri", "klass": "melee", "damage": 14.0, "impact": 8.0, "reach": 2.0, "swing": 0.3, "cost": 60, "ammo": -1, "model": "knife", "desc": "Fastest blade."},
+	"pencase": {"name": "Pen case", "tibetan": "", "klass": "melee", "damage": 9.8, "impact": 20.0, "reach": 2.1, "swing": 0.42, "cost": 40, "ammo": -1, "model": "pencase", "desc": "Gravel-filled, cheap and comic."},
+	"whip": {"name": "Whip", "tibetan": "", "klass": "melee", "damage": 8.4, "impact": 15.0, "reach": 3.0, "swing": 0.34, "cost": 120, "ammo": -1, "model": "whip", "desc": "Long and quick."},
+	"sword": {"name": "Sword", "tibetan": "ral gri", "klass": "melee", "damage": 25.2, "impact": 24.0, "reach": 2.6, "swing": 0.55, "cost": 450, "ammo": -1, "model": "sword", "desc": "Best all-round."},
+	"key": {"name": "Iron key", "tibetan": "lde brdzus", "klass": "melee", "damage": 21.0, "impact": 38.0, "reach": 3.5, "swing": 0.7, "cost": 650, "ammo": -1, "model": "key", "desc": "On a thong. Outreaches swords, weak up close."},
+	"spear": {"name": "Spear", "tibetan": "mdung", "klass": "melee", "damage": 22.4, "impact": 34.0, "reach": 4.0, "swing": 0.75, "cost": 700, "ammo": -1, "model": "spear", "desc": "At a full gallop, +25% impact."},
+	"sling": {"name": "Sling", "tibetan": "'ur rdo", "klass": "ranged", "damage": 5.6, "impact": 6.0, "reach": 28.0, "swing": 0.8, "cost": 80, "ammo": 297, "model": "sling", "draw": 0.5, "min_draw": 0.3, "speed": 42.0, "desc": "Side-swung, plentiful stones."},
+	"bow": {"name": "Bow", "tibetan": "gzhu", "klass": "ranged", "damage": 11.9, "impact": 8.0, "reach": 45.0, "swing": 0.9, "cost": 520, "ammo": 36, "model": "bow", "draw": 0.9, "min_draw": 0.25, "speed": 70.0, "desc": "Draw to aim, +30% at full draw."},
+	"roped_spear": {"name": "Roped spear", "tibetan": "thag mdung", "klass": "ranged", "damage": 14.7, "impact": 12.0, "reach": 27.0, "swing": 1.1, "cost": 900, "ammo": -1, "model": "roped_spear", "draw": 0.35, "min_draw": 0.2, "speed": 38.0, "desc": "Thrown then hauled back, no ammo."},
 }
 
 const MELEE_IDS := ["fists", "knife", "pencase", "whip", "sword", "key", "spear"]
@@ -71,7 +71,7 @@ const RIVALS := {
 		"name": "Pon Wangyal Dorje", "region": "Kham", "seasons": [0, 1, 2], "weapon": "sword", "ranged": "", "shield": false,
 		"horse": "turquoise_bird", "skill": 0.85, "aggression": 0.8, "lane": 0.0, "pace": 0.985, "style": "front", "bon": false,
 		"slot_a": Color("c4262e"), "slot_b": Color("f2c14e"), "skin": Color("e0b08a"),
-		"wardrobe": ["body_oneoff", "head_young", "hair_wound"],
+		"wardrobe": ["body_oneoff", "head_young", "hair_wound", "hat_peak"],
 		"lines": {
 			"intro": ["A pack pony? Good. I need something to overtake.", "I have never lost. Do come and watch."],
 			"grudge": ["You knocked my hat off in front of my mother. We're friends now. I'm going to kill you."],

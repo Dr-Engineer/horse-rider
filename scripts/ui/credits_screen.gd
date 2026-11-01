@@ -91,6 +91,7 @@ func _to_ask() -> void:
 	_phase = Phase.ASK
 	_t = 0.0
 	Sfx.stop_music()
+	Speak.say("child", "and_then", "en")     # a beat of the story, so it is spoken whatever the chatter language is
 
 
 func _to_card() -> void:

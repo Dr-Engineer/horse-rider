@@ -7,7 +7,9 @@ extends RefCounted
 ##   boulder {size}  log {len, yaw}  mud {w, len}  ramp {w, len, rise}  mani_wall {len, yaw}  chorten {}
 ##   yak_herd {count, dir, speed}   sheep {count, dir, speed}   caravan {count, speed}
 ##   scarf {color: 0..4, group}     target_pole {}       quiet_zone {s0, s1}   pass {s}   start {s}   finish {s}
+##   bullseye {}   wolf_flock {sheep, wolves}: these two stand off the road, see scripts/race/roadside.gd
 ## Season scales length (about 2.0, 2.6 and 3.2 km) and event density. Fixed set pieces keep their fraction.
+## A bend keeps its radius in every season: a longer course turns further, it doesn't turn more gently.
 ##
 ## Dressing (course.dress) is read by TrackDressing: layers of scatter plus set_pieces placed by s and d.
 
@@ -18,6 +20,8 @@ const SEASON_DENSITY: Array[float] = [1.0, 1.4, 1.8]
 const SCARF_COLORS: Array[Color] = [Color("2f6fd0"), Color("e8871e"), Color("d63a22"), Color("2fa05a"), Color("f2c632")]
 const SCARF_PICKS: Array[int] = [0, 2, 3, 4]
 const IDS: Array[String] = ["tea_horse_road", "grass_sea", "turquoise_pass", "gallop_behind_the_fort", "western_gate"]
+const BULLSEYE_OUT := 6.5     # metres past the road's edge: out of reach from the road, and a horse in the scrub can't quite touch it
+const FLOCK_OUT := 10.0       # the middle of a flock
 
 # Palette hex values, copied from art/tools/atlas_palette.py. Terrain only ever uses these.
 const PAL := {
@@ -27,7 +31,7 @@ const PAL := {
 	"turquoise": "#2FB7B0", "turquoise_light": "#7FD9CE", "water_deep": "#17779B",
 	"umber": "#5A3D2B", "sienna": "#8C5A33", "tan": "#B98D5A", "sand": "#D8BE8E", "khaki": "#A89A63",
 	"rock_red": "#9C4E36", "rock_grey": "#7D7A78", "rock_dark": "#544F52", "rock_purple": "#6F5A6B",
-	"grass_gold": "#B6A94F", "grass_green": "#7E9A41", "grass_deep": "#4F7A3A", "pine": "#2F5540",
+	"grass_gold": "#B6A94F", "grass_green": "#7E9A41", "grass_deep": "#4F7A3A", "pine": "#2F5540", "orpiment": "#F2B632",
 	"juniper": "#3C6B52", "barley": "#D9C75A", "snow": "#F6FBFF", "snow_shadow": "#BFD2E8", "ochre": "#C9953F",
 }
 
@@ -61,7 +65,85 @@ static func get_course(index: int, season: int) -> Dictionary:
 		2: def = _turquoise_pass()
 		3: def = _gyantse()
 		_: def = _western_gate()
-	return _assemble(index, season, def)
+	var course := _assemble(index, season, def)
+	_apply_season(course)
+	return course
+
+
+## The look of each Season, laid over the course's own colours (env and biome only, never the layout or events):
+##   Spring Meets    crisp and green, cool light, small clean clouds, more snow on the heights
+##   Summer Festival bright and saturated, a high sun, big clouds
+##   Harvest Final   golden, a low warm sun with long shadows, thin high cloud, grass gone to barley
+## Everything is mixed from the palette above. Foliage gets a tint that TrackDressing multiplies into plants.
+static func _apply_season(course: Dictionary) -> void:
+	var season: int = course["season"]
+	var env: Dictionary = course["env"]
+	var biome: Dictionary = course["biome"]
+	var colors: Dictionary = biome["colors"]
+	var dress: Dictionary = course["dress"]
+	var rot: Vector3 = env.get("sun_rot", Vector3(-42.0, -38.0, 0.0))
+	match season:
+		0:
+			env["sun_color"] = Color(0.94, 0.975, 1.0)
+			env["sun_energy"] = 0.52
+			env["ambient"] = Color(0.78, 0.86, 1.0)
+			env["ambient_energy"] = 0.65
+			env["sky_top"] = _mix("lapis", "lapis_deep", 0.12)
+			env["sky_horizon"] = _mix("sky_pale", "turquoise_light", 0.14)
+			env["fog_color"] = _mix("sky_pale", "snow", 0.4)
+			env["fog_density"] = float(env.get("fog_density", 0.9)) * 0.85
+			env["fog_end"] = float(env.get("fog_end", 3500.0)) * 1.2
+			env["cloud_cover"] = 0.34
+			env["cloud_scale"] = 1.35
+			colors["grass_a"] = (colors["grass_a"] as Color).lerp(_c("grass_green"), 0.5)
+			colors["grass_b"] = (colors["grass_b"] as Color).lerp(_c("grass_deep"), 0.3).lerp(_c("grass_green"), 0.15)
+			colors["grass_c"] = (colors["grass_c"] as Color).lerp(_c("grass_green"), 0.35)
+			colors["verge"] = (colors["verge"] as Color).lerp(_c("grass_deep"), 0.15)
+			biome["snow_line"] = float(biome.get("snow_line", 150.0)) * 0.8
+			biome["far_snow_line"] = float(biome.get("far_snow_line", 420.0)) * 0.85
+			dress["foliage_tint"] = Color(0.93, 1.08, 0.96)
+		1:
+			env["sun_color"] = Color(1.0, 0.965, 0.87)
+			env["sun_energy"] = 0.56
+			rot.x = -57.0
+			env["sun_rot"] = rot
+			env["ambient"] = Color(0.86, 0.88, 1.0)
+			env["ambient_energy"] = 0.66
+			env["sky_top"] = _c("lapis")
+			env["sky_horizon"] = _mix("sky_pale", "azure", 0.28)
+			env["fog_color"] = _mix("sky_pale", "snow", 0.45)
+			env["fog_end"] = float(env.get("fog_end", 3500.0)) * 1.1
+			env["cloud_cover"] = 0.86
+			env["cloud_scale"] = 0.62
+			for key in ["grass_a", "grass_b", "grass_c"]:
+				var g: Color = colors[key]
+				colors[key] = Color.from_hsv(g.h, minf(g.s * 1.28, 1.0), minf(g.v * 1.06, 1.0))
+			colors["verge"] = (colors["verge"] as Color).lightened(0.05)
+			dress["foliage_tint"] = Color(0.96, 1.1, 0.9)
+		_:
+			env["sun_color"] = _mix("conch", "orpiment", 0.42)
+			env["sun_energy"] = 0.62
+			rot.x = -31.0
+			env["sun_rot"] = rot
+			env["ambient"] = Color(0.9, 0.86, 0.84)
+			env["ambient_energy"] = 0.8
+			env["sky_top"] = _mix("lapis", "azure", 0.12)
+			env["sky_mid"] = Color(0.5, 0.6, 0.88)
+			env["sky_horizon"] = _mix("conch", "orpiment", 0.28)
+			env["fog_color"] = _mix("sand", "conch", 0.35)
+			env["fog_density"] = float(env.get("fog_density", 0.9)) * 1.05
+			env["cloud_cover"] = 0.42
+			env["cloud_scale"] = 0.9
+			env["cloud_light"] = Color(1.0, 0.93, 0.8)
+			env["cloud_shade"] = Color(0.8, 0.7, 0.76)
+			env["sun_size"] = 0.05
+			colors["grass_a"] = _c("grass_gold").lerp(_c("barley"), 0.55)
+			colors["grass_b"] = _mix("grass_gold", "ochre", 0.4)
+			colors["grass_c"] = _mix("khaki", "ochre", 0.4)
+			colors["verge"] = _mix("tan", "khaki", 0.4)
+			colors["rock"] = (colors["rock"] as Color).lerp(_c("rock_red"), 0.15)
+			biome["snow_line"] = float(biome.get("snow_line", 150.0)) * 1.25
+			dress["foliage_tint"] = Color(1.28, 1.0, 0.62)
 
 
 ## Scales the base layout to the season, then places fixed events, then fills the rest.
@@ -73,7 +155,7 @@ static func _assemble(index: int, season: int, def: Dictionary) -> Dictionary:
 	var segs: Array = []
 	var total := 0.0
 	for seg: Array in def.segments:
-		var out: Array = [float(seg[0]) * k, float(seg[1]), float(seg[2]) * k]
+		var out: Array = [float(seg[0]) * k, float(seg[1]) * k, float(seg[2]) * k]
 		if seg.size() > 3:
 			out.append(float(seg[3]))
 		segs.append(out)
@@ -109,13 +191,23 @@ static func _assemble(index: int, season: int, def: Dictionary) -> Dictionary:
 		var side := 1.0 if float(e["d"]) >= 0.0 else -1.0
 		match String(e["type"]):
 			"mani_wall":
-				e["d"] = side * (hwl - 1.6)
+				e["d"] = side * (hwl - 0.6)
 			"chorten":
-				e["d"] = side * (hwl - 2.0)
+				e["d"] = side * (hwl + 0.2)
 			"target_pole":
 				e["d"] = side * (hwl + 2.5)
+			"bullseye":
+				e["d"] = side * (hwl + BULLSEYE_OUT)
+			"wolf_flock":
+				e["d"] = side * (hwl + FLOCK_OUT)
 			"boulder", "log", "mud", "ramp", "scarf", "caravan", "sheep", "yak_herd":
 				e["d"] = clampf(float(e["d"]), -(hwl - 2.2), hwl - 2.2)
+		# Mud and ramps never close the whole road: there is always a way round.
+		match String(e["type"]):
+			"mud":
+				e["w"] = minf(float(e.get("w", 6.0)), hwl * 1.1)
+			"ramp":
+				e["w"] = minf(float(e.get("w", 5.0)), hwl * 0.85)
 
 	var biome: Dictionary = def.biome.duplicate(true)
 	biome["half_width"] = half_width
@@ -149,6 +241,8 @@ static func _assemble(index: int, season: int, def: Dictionary) -> Dictionary:
 	# Era details. No comment, no text: survey stakes from Season 1, one truck parked at the Western Gate in Season 2.
 	dress["survey_stakes"] = season >= 1
 	dress["truck"] = season >= 2 and index == 4
+	dress["plumes"] = season >= 2          # far columns of dust on the plain, Season 3 only
+	dress["milestones"] = true
 
 	return {
 		"id": IDS[index], "index": index, "season": season,
@@ -168,11 +262,13 @@ static func _in_quiet(s: float, quiet: Array, length: float, margin: float = 40.
 
 static func _fill_events(events: Array, fill: Dictionary, density: float, length: float, hw: float, rng: RandomNumberGenerator, quiet: Array) -> void:
 	var taken: Array = []   # [a, b] ranges of s already used
+	var taken_beside: Array = []   # the same for what stands off the road, which road events leave plenty of room for
 	for e: Dictionary in events:
 		if e.has("s"):
 			taken.append([float(e["s"]), float(e["s"])])
 	for type: String in fill.keys():
 		var n := int(roundf(float(fill[type]) * density * length / 2000.0))
+		var used: Array = taken_beside if type in ["bullseye", "wolf_flock"] else taken
 		for i in n:
 			for attempt in 60:
 				var span := 45.0 if type == "scarf" else 0.0
@@ -180,13 +276,13 @@ static func _fill_events(events: Array, fill: Dictionary, density: float, length
 				if _in_quiet(s, quiet, length) or _in_quiet(s + span, quiet, length):
 					continue
 				var ok := true
-				for t: Array in taken:
+				for t: Array in used:
 					if s < float(t[1]) + 30.0 and s + span > float(t[0]) - 30.0:
 						ok = false
 						break
 				if not ok:
 					continue
-				taken.append([s, s + span])
+				used.append([s, s + span])
 				if type == "scarf":
 					var color: int = SCARF_PICKS[rng.randi() % SCARF_PICKS.size()]
 					var side := 1.0 if rng.randf() < 0.5 else -1.0
@@ -212,11 +308,11 @@ static func _detail(type: String, s: float, hw: float, rng: RandomNumberGenerato
 			e["yaw"] = rng.randf_range(-35.0, 35.0)
 		"mud":
 			e["d"] = rng.randf_range(-hw * 0.5, hw * 0.5)
-			e["w"] = rng.randf_range(9.0, 14.0)
-			e["len"] = rng.randf_range(14.0, 24.0)
+			e["w"] = rng.randf_range(0.7, 1.1) * hw
+			e["len"] = rng.randf_range(12.0, 20.0)
 		"ramp":
 			e["d"] = side * hw * 0.4
-			e["w"] = 6.5
+			e["w"] = 5.0
 			e["len"] = 9.0
 			e["rise"] = 1.4
 		"sheep":
@@ -233,13 +329,19 @@ static func _detail(type: String, s: float, hw: float, rng: RandomNumberGenerato
 			e["dir"] = int(side)
 			e["speed"] = 2.5
 		"mani_wall":
-			e["d"] = side * (hw - 1.6)
+			e["d"] = side * (hw - 0.6)
 			e["len"] = 12.0
 			e["yaw"] = 0.0
 		"chorten":
-			e["d"] = side * (hw - 2.0)
+			e["d"] = side * (hw + 0.2)
 		"target_pole":
 			e["d"] = side * (hw + 2.5)
+		"bullseye":
+			e["d"] = side * (hw + BULLSEYE_OUT)
+		"wolf_flock":
+			e["d"] = side * (hw + FLOCK_OUT)
+			e["sheep"] = rng.randi_range(4, 6)
+			e["wolves"] = rng.randi_range(1, 2)
 	return e
 
 
@@ -256,10 +358,12 @@ static func _tea_horse_road() -> Dictionary:
 	return {
 		"name": "Tea Horse Road", "region": "Kham",
 		"blurb": "A mule road cut into a red gorge. The river is a long way down, and the mules are in no hurry.",
-		"half_width": 10.0,
+		"half_width": 6.0,
 		"segments": [
-			[160, 0, 0], [220, -35, 11], [200, 30, 8], [150, -62, 14], [180, -18, 12, 8.0], [200, 26, 5, 8.0],
-			[110, -74, 9], [240, 22, 12], [190, -40, 5], [200, 14, -8], [150, 0, 0],
+			[130, 0, 0], [90, -65, 6], [100, 85, 6], [70, -60, 5], [90, 75, 7], [110, -100, 8], [60, 45, 4], [60, 0, 2],
+			[90, 70, 6], [130, -100, 8], [140, 0, 1, 4.5],   # the bridge, on a straight
+			[90, 70, 5], [80, -75, 5, 5.0], [100, 95, 6], [90, -85, 5], [70, 55, 3], [110, -110, 5], [90, 80, 3],
+			[80, -60, 0], [90, 60, -6], [130, 0, 0],
 		],
 		"biome": {
 			"rugged": 11.0, "mountain": 320.0, "mountain_start": 24.0, "mountain_end": 360.0,
@@ -283,12 +387,12 @@ static func _tea_horse_road() -> Dictionary:
 			{"type": "mani_wall", "f": 0.30, "d": -8.4, "len": 12.0, "yaw": 0.0},
 			{"type": "chorten", "f": 0.43, "d": -7.5},
 			{"type": "caravan", "f": 0.62, "d": -3.0, "count": 6, "speed": 4.0},
-			{"type": "ramp", "f": 0.70, "d": 3.0, "w": 6.5, "len": 9.0, "rise": 1.4},
+			{"type": "ramp", "f": 0.70, "d": 3.0, "w": 5.0, "len": 9.0, "rise": 1.4},
 			{"type": "scarf", "f": 0.80, "d": 0.0, "color": 2, "group": 90},
 			{"type": "scarf", "f": 0.8075, "d": 2.0, "color": 2, "group": 90},
 			{"type": "scarf", "f": 0.815, "d": 3.0, "color": 2, "group": 90},
 		],
-		"fill": {"boulder": 6, "log": 3, "mud": 2, "scarf": 2, "sheep": 1, "ramp": 1},
+		"fill": {"boulder": 3, "log": 2, "mud": 2, "scarf": 2, "sheep": 1, "ramp": 1, "bullseye": 4, "wolf_flock": 2},
 		"set_pieces": [
 			{"prop": "house_kham", "f": 0.07, "d": -40.0, "face": "road", "scale": 1.0},
 			{"prop": "house_kham", "f": 0.092, "d": -50.0, "face": "road", "scale": 1.12},
@@ -314,6 +418,8 @@ static func _tea_horse_road() -> Dictionary:
 				_layer("juniper", 10.0, 1.5, 60.0, {"bias": 1.6, "scale": [0.8, 1.5], "slope": 0.7, "cull": 650, "shadow": true}),
 				_layer("bush", 26.0, 0.6, 45.0, {"bias": 1.7, "scale": [0.8, 1.6], "slope": 0.7, "cull": 380}),
 				_layer("grass_tuft", 260.0, 0.1, 34.0, {"ink_class": 0.85, "bias": 1.7, "scale": [0.6, 1.2], "slope": 0.75, "cull": 300, "shadow": false}),
+				_layer("grass_tall", 22.0, 0.6, 40.0, {"ink_class": 0.85, "bias": 1.6, "scale": [0.8, 1.3], "slope": 0.7, "cull": 240, "shadow": false}),
+				_layer("flowers", 40.0, 0.4, 30.0, {"ink_class": 0.85, "bias": 1.5, "scale": [0.9, 1.4], "slope": 0.7, "cull": 150, "shadow": false}),
 				_layer("rock_a", 4.0, 1.5, 70.0, {"bias": 1.5, "scale": [0.8, 1.9], "slope": 0.95, "cull": 700, "shadow": true, "tint": [Color(1.15, 0.8, 0.7), Color(1.0, 0.85, 0.85)]}),
 				_layer("rock_b", 4.0, 1.5, 70.0, {"bias": 1.5, "scale": [0.8, 1.9], "slope": 0.95, "cull": 700, "shadow": true, "tint": [Color(1.15, 0.8, 0.7), Color(1.0, 0.85, 0.85)]}),
 				_layer("rock_c", 4.0, 1.5, 70.0, {"bias": 1.5, "scale": [0.8, 1.9], "slope": 0.95, "cull": 700, "shadow": true, "tint": [Color(1.15, 0.8, 0.7), Color(1.0, 0.85, 0.85)]}),
@@ -333,8 +439,11 @@ static func _grass_sea() -> Dictionary:
 	return {
 		"name": "Grass Sea", "region": "Nagchu",
 		"blurb": "The plain runs out to the edge of the sky. Yaks cross where they like, and you will go around.",
-		"half_width": 14.0,
-		"segments": [[180, 0, 0], [300, 22, 2], [240, -32, -2], [280, -18, 3], [260, 42, 0], [320, -46, 3], [280, 18, -2], [140, 0, 0]],
+		"half_width": 7.5,
+		"segments": [
+			[150, 0, 0], [130, 70, 1], [130, -85, -1], [110, 70, 1], [140, -100, 1], [120, 80, -1], [110, 0, 0],
+			[120, -75, 1], [130, 90, 0], [120, -85, 1], [130, 100, -1], [120, -90, 0], [140, 60, -1], [100, -30, 0], [150, 0, 0],
+		],
 		"biome": {
 			"rugged": 2.0, "mountain": 120.0, "mountain_start": 900.0, "mountain_end": 2800.0,
 			"snow_line": 260.0, "far_snow_line": 190.0, "horizon": 460.0, "rock_slope": 0.7, "bank_blend": 20.0,
@@ -356,30 +465,32 @@ static func _grass_sea() -> Dictionary:
 			{"type": "mani_wall", "f": 0.40, "d": 12.4, "len": 12.0, "yaw": 0.0},
 			{"type": "caravan", "f": 0.60, "d": 5.0, "count": 5, "speed": 4.0},
 			{"type": "yak_herd", "f": 0.74, "d": 0.0, "count": 8, "dir": 1, "speed": 2.5},
-			{"type": "ramp", "f": 0.30, "d": -6.0, "w": 6.5, "len": 9.0, "rise": 1.4},
-			{"type": "ramp", "f": 0.86, "d": 6.0, "w": 6.5, "len": 9.0, "rise": 1.4},
+			{"type": "ramp", "f": 0.30, "d": -3.0, "w": 5.0, "len": 9.0, "rise": 1.4},
+			{"type": "ramp", "f": 0.86, "d": 3.0, "w": 5.0, "len": 9.0, "rise": 1.4},
 		],
-		"fill": {"boulder": 3, "mud": 4, "scarf": 3, "log": 1, "sheep": 1},
+		"fill": {"boulder": 2, "mud": 3, "scarf": 3, "log": 1, "sheep": 1, "bullseye": 3, "wolf_flock": 3},
 		"set_pieces": [
-			{"prop": "tent_black", "f": 0.12, "d": -60.0, "face": "road", "scale": 1.7},
-			{"prop": "tent_black", "f": 0.128, "d": -74.0, "face": "road", "scale": 1.9},
-			{"prop": "tent_black", "f": 0.116, "d": -84.0, "face": "road", "scale": 1.6},
+			{"prop": "tent_black", "f": 0.12, "d": -60.0, "face": "road", "scale": 1.25},
+			{"prop": "tent_black", "f": 0.128, "d": -74.0, "face": "road", "scale": 1.4},
+			{"prop": "tent_black", "f": 0.116, "d": -84.0, "face": "road", "scale": 1.15},
 			{"prop": "yak", "f": 0.122, "d": -50.0, "face": "road", "scale": 1.0},
 			{"prop": "yak", "f": 0.135, "d": -56.0, "face": "road", "scale": 1.0},
 			{"prop": "dog", "f": 0.118, "d": -48.0, "face": "road", "scale": 1.0},
 			{"prop": "flagpole", "f": 0.124, "d": -42.0, "face": "road", "scale": 1.1},
-			{"prop": "tent_black", "f": 0.55, "d": 70.0, "face": "road", "scale": 1.8},
-			{"prop": "tent_black", "f": 0.562, "d": 86.0, "face": "road", "scale": 1.6},
+			{"prop": "tent_black", "f": 0.55, "d": 70.0, "face": "road", "scale": 1.3},
+			{"prop": "tent_black", "f": 0.562, "d": 86.0, "face": "road", "scale": 1.15},
 			{"prop": "churn", "f": 0.556, "d": 58.0, "face": "road", "scale": 1.0},
 			{"prop": "dung_stack", "f": 0.548, "d": 62.0, "face": "road", "scale": 1.0},
 			{"prop": "dog", "f": 0.558, "d": 60.0, "face": "road", "scale": 1.0},
-			{"prop": "tent_black", "f": 0.88, "d": -90.0, "face": "road", "scale": 1.7},
+			{"prop": "tent_black", "f": 0.88, "d": -90.0, "face": "road", "scale": 1.25},
 			{"prop": "wool_bale", "f": 0.882, "d": -76.0, "face": "road", "scale": 1.0},
 			{"prop": "cairn", "f": 0.33, "d": 45.0, "face": "road", "scale": 1.3},
 		],
 		"dress": {
 			"layers": [
 				_layer("grass_tuft", 150.0, 0.3, 170.0, {"ink_class": 0.85, "bias": 1.5, "scale": [0.6, 1.2], "slope": 0.7, "cull": 340, "shadow": false}),
+				_layer("grass_tall", 30.0, 0.6, 120.0, {"ink_class": 0.85, "bias": 1.4, "scale": [0.8, 1.4], "slope": 0.6, "cull": 260, "shadow": false}),
+				_layer("flowers", 70.0, 0.4, 110.0, {"ink_class": 0.85, "bias": 1.3, "scale": [0.9, 1.5], "slope": 0.6, "cull": 170, "shadow": false}),
 				_layer("bush", 4.0, 4.0, 140.0, {"bias": 1.2, "scale": [0.8, 1.4], "slope": 0.5, "cull": 420}),
 				_layer("rock_a", 2.0, 3.0, 160.0, {"bias": 1.2, "scale": [0.7, 1.5], "slope": 0.6, "cull": 600, "shadow": true}),
 				_layer("rock_b", 2.0, 3.0, 160.0, {"bias": 1.2, "scale": [0.7, 1.5], "slope": 0.6, "cull": 600, "shadow": true}),
@@ -387,7 +498,7 @@ static func _grass_sea() -> Dictionary:
 				_layer("sheep", 1.6, 16.0, 240.0, {"scale": [0.9, 1.1], "slope": 0.4, "cull": 500, "herd": 8, "nodes": true}),
 				_layer("kiang", 0.35, 70.0, 300.0, {"scale": [1.0, 1.1], "slope": 0.4, "cull": 800, "herd": 4, "nodes": true}),
 				_layer("marmot", 1.0, 6.0, 70.0, {"scale": [1.0, 1.2], "slope": 0.4, "cull": 250, "nodes": true}),
-				_layer("tent_black", 0.22, 40.0, 200.0, {"face_road": true, "scale": [1.4, 1.8], "slope": 0.3, "cull": 800, "herd": 2, "nodes": true}),
+				_layer("tent_black", 0.22, 40.0, 200.0, {"face_road": true, "scale": [1.05, 1.4], "slope": 0.3, "cull": 800, "herd": 2, "nodes": true}),
 				_layer("flag_string", 0.5, 0.5, 20.0, {"align": true, "scale": [1.0, 1.3], "slope": 0.5, "cull": 600, "nodes": true}),
 				_layer("cairn", 0.3, 4.0, 60.0, {"scale": [1.0, 1.4], "slope": 0.4, "cull": 700, "nodes": true}),
 				_layer("crane", 0.2, 30.0, 200.0, {"scale": [1.0, 1.2], "slope": 0.3, "cull": 500, "herd": 2, "nodes": true}),
@@ -401,10 +512,12 @@ static func _turquoise_pass() -> Dictionary:
 	return {
 		"name": "Turquoise Pass", "region": "Kamba La",
 		"blurb": "Up through the switchbacks to the cairn, then down to a lake the colour of a good bead.",
-		"half_width": 10.0,
+		"half_width": 5.5,
 		"segments": [
-			[120, 0, 0], [200, -55, 18], [170, 85, 20], [200, -100, 22], [150, 40, 14], [100, 0, 4], [140, 0, 0, 12.0],
-			[140, -30, -10], [200, 75, -24], [190, -90, -26], [200, 35, -18], [160, -20, -10], [130, 0, -4],
+			[100, 0, 0], [80, -85, 8], [95, 125, 10], [90, -125, 10], [100, 135, 12], [85, -120, 10], [100, 130, 12],
+			[80, -85, 8], [60, 25, 3], [100, 0, 5], [140, 0, 0, 8.5],   # the pass opens out around the cairn
+			[80, -50, -8], [100, 110, -14], [90, -105, -13], [85, 90, -11], [100, -110, -14], [90, 100, -12], [90, -70, -8],
+			[60, 35, -5], [120, 0, -2],
 		],
 		"biome": {
 			"rugged": 11.0, "mountain": 280.0, "mountain_start": 40.0, "mountain_end": 600.0,
@@ -427,15 +540,15 @@ static func _turquoise_pass() -> Dictionary:
 			{"type": "boulder", "f": 0.2, "d": -4.0, "size": 1.3},
 			{"type": "boulder", "f": 0.215, "d": 3.0, "size": 1.1},
 			{"type": "mani_wall", "f": 0.285, "d": -8.4, "len": 12.0, "yaw": 0.0},
-			{"type": "mud", "f": 0.42, "d": 0.0, "w": 12.0, "len": 20.0},
+			{"type": "mud", "f": 0.42, "d": 1.5, "w": 6.0, "len": 18.0},
 			{"type": "scarf", "f": 0.56, "d": 0.0, "color": 3, "group": 91},
 			{"type": "scarf", "f": 0.5675, "d": 3.0, "color": 3, "group": 91},
 			{"type": "scarf", "f": 0.575, "d": -3.0, "color": 3, "group": 91},
 			{"type": "yak_herd", "f": 0.7, "d": 0.0, "count": 6, "dir": 1, "speed": 2.5},
 			{"type": "log", "f": 0.82, "d": 1.0, "len": 5.5, "yaw": 20.0},
-			{"type": "ramp", "f": 0.9, "d": -3.0, "w": 6.5, "len": 9.0, "rise": 1.4},
+			{"type": "ramp", "f": 0.9, "d": -2.0, "w": 4.5, "len": 9.0, "rise": 1.4},
 		],
-		"fill": {"boulder": 6, "mud": 2, "log": 2, "scarf": 1, "sheep": 1},
+		"fill": {"boulder": 3, "mud": 2, "log": 1, "scarf": 1, "sheep": 1, "bullseye": 3, "wolf_flock": 2},
 		"set_pieces": [
 			{"prop": "cairn", "f": 0.5, "d": -16.0, "face": "road", "scale": 2.4},
 			{"prop": "flagpole", "f": 0.495, "d": -22.0, "face": "road", "scale": 1.5},
@@ -454,6 +567,7 @@ static func _turquoise_pass() -> Dictionary:
 				_layer("rock_c", 5.0, 2.0, 120.0, {"bias": 1.4, "scale": [0.8, 2.0], "slope": 0.9, "cull": 800, "shadow": true}),
 				_layer("boulder", 1.5, 5.0, 100.0, {"bias": 1.4, "scale": [1.0, 2.6], "slope": 0.95, "cull": 900, "shadow": true}),
 				_layer("grass_tuft", 26.0, 0.3, 40.0, {"ink_class": 0.85, "bias": 1.8, "scale": [0.6, 1.1], "slope": 0.6, "cull": 280, "shadow": false}),
+				_layer("flowers", 16.0, 0.4, 30.0, {"ink_class": 0.85, "bias": 1.6, "scale": [0.8, 1.2], "slope": 0.6, "cull": 140, "shadow": false}),
 				_layer("juniper", 1.2, 4.0, 40.0, {"bias": 1.5, "scale": [0.6, 1.0], "slope": 0.5, "cull": 450, "shadow": true}),
 				_layer("flag_string", 0.5, 0.5, 18.0, {"align": true, "scale": [1.0, 1.4], "slope": 0.5, "cull": 700, "nodes": true}),
 				_layer("flag_string", 5.0, 0.5, 18.0, {"align": true, "scale": [1.0, 1.4], "slope": 0.5, "cull": 700, "nodes": true, "f0": 0.44, "f1": 0.56}),
@@ -470,10 +584,11 @@ static func _gyantse() -> Dictionary:
 	return {
 		"name": "Gallop Behind the Fort", "region": "Gyantse",
 		"blurb": "Behind the fort the barley is cut and the whole valley has come to watch. Mind the poles and the monastery.",
-		"half_width": 9.0,
+		"half_width": 5.5,
 		"segments": [
-			[170, 0, 0], [240, 35, 1], [200, -50, 2], [160, 70, 0], [200, 0, 0, 7.0], [160, -75, 1, 7.0],
-			[230, 40, 0], [200, -30, -1], [240, 55, 2], [200, 0, 0],
+			[130, 0, 0], [100, 75, 1], [100, -90, 1], [90, 80, 0], [90, -70, 0], [100, 60, 1], [100, -75, 0], [60, 20, 0],
+			[120, 0, 0, 4.5], [90, -85, 1, 4.5], [100, 100, 0, 4.5], [100, -85, 0, 4.5],   # narrow through the quiet ground
+			[60, 40, 0], [100, 80, 0], [100, -95, 1], [90, 85, 0], [100, -100, 1], [90, 70, 0], [80, -50, 0], [200, 0, 0],
 		],
 		"biome": {
 			"rugged": 2.5, "mountain": 230.0, "mountain_start": 380.0, "mountain_end": 1300.0,
@@ -500,10 +615,10 @@ static func _gyantse() -> Dictionary:
 			{"type": "target_pole", "f": 0.80, "d": -11.5},
 			{"type": "caravan", "f": 0.38, "d": 3.0, "count": 5, "speed": 4.0},
 		],
-		"fill": {"boulder": 2, "mud": 2, "scarf": 3, "log": 1, "sheep": 1, "ramp": 1},
+		"fill": {"boulder": 1, "mud": 2, "scarf": 3, "log": 1, "sheep": 1, "ramp": 1, "bullseye": 4, "wolf_flock": 1},
 		"set_pieces": [
 			{"prop": "dzong", "f": 0.40, "d": -230.0, "face": "road", "scale": 1.0, "sink": 8.0, "far": true},
-			{"prop": "kumbum", "f": 0.54, "d": 110.0, "face": "road", "scale": 0.8, "sink": 1.0},
+			{"prop": "kumbum", "f": 0.54, "d": 70.0, "face": "road", "scale": 0.8, "sink": 1.0},
 			{"prop": "monastery", "f": 0.57, "d": 150.0, "face": "road", "scale": 1.0, "sink": 6.0, "far": true},
 			{"prop": "house_tsang", "f": 0.08, "d": -44.0, "face": "road", "scale": 1.0},
 			{"prop": "house_tsang", "f": 0.098, "d": -56.0, "face": "road", "scale": 1.1},
@@ -524,6 +639,8 @@ static func _gyantse() -> Dictionary:
 			"layers": [
 				_layer("barley_patch", 12.0, 3.0, 90.0, {"ink_class": 0.85, "bias": 1.1, "scale": [1.0, 1.6], "slope": 0.25, "cull": 520, "shadow": false}),
 				_layer("grass_tuft", 30.0, 0.3, 40.0, {"ink_class": 0.85, "bias": 2.0, "scale": [0.6, 1.1], "slope": 0.6, "cull": 260, "shadow": false}),
+				_layer("grass_tall", 12.0, 0.6, 40.0, {"ink_class": 0.85, "bias": 1.8, "scale": [0.8, 1.3], "slope": 0.6, "cull": 220, "shadow": false}),
+				_layer("flowers", 28.0, 0.4, 36.0, {"ink_class": 0.85, "bias": 1.6, "scale": [0.9, 1.3], "slope": 0.6, "cull": 140, "shadow": false}),
 				_layer("willow", 3.0, 4.0, 90.0, {"bias": 1.4, "scale": [0.9, 1.4], "slope": 0.4, "cull": 1000, "shadow": true}),
 				_layer("rock_a", 1.5, 3.0, 100.0, {"bias": 1.3, "scale": [0.7, 1.4], "slope": 0.7, "cull": 600, "shadow": true}),
 				_layer("rock_b", 1.5, 3.0, 100.0, {"bias": 1.3, "scale": [0.7, 1.4], "slope": 0.7, "cull": 600, "shadow": true}),
@@ -546,8 +663,12 @@ static func _western_gate() -> Dictionary:
 	return {
 		"name": "The Western Gate", "region": "Lhasa",
 		"blurb": "Willows, whitewash and the whole city out on the road. Through the gate it goes quiet. After, it does not.",
-		"half_width": 12.0,
-		"segments": [[200, 0, 0], [260, 30, 1], [240, -45, 1], [260, 20, 0], [320, 0, 0, 10.0], [260, -25, 0], [240, 35, 1], [220, -20, 0], [300, 0, 0]],
+		"half_width": 6.5,
+		"segments": [
+			[140, 0, 0], [100, 70, 1], [100, -85, 1], [90, 75, 0], [100, -80, 0], [90, 60, 1], [80, -40, 0],
+			[200, 0, 0, 5.0], [80, -60, 0, 5.0], [80, 60, 0, 5.0], [180, 0, 0, 5.0],   # the straight through the gate
+			[90, -70, 0], [100, 85, 1], [90, -85, 0], [100, 90, 1], [90, -80, 0], [80, 60, 0], [240, 0, 0],
+		],
 		"biome": {
 			"rugged": 2.5, "mountain": 220.0, "mountain_start": 420.0, "mountain_end": 1500.0,
 			"snow_line": 340.0, "far_snow_line": 330.0, "horizon": 620.0, "rock_slope": 0.55, "bank_blend": 16.0,
@@ -574,7 +695,7 @@ static func _western_gate() -> Dictionary:
 			{"type": "target_pole", "f": 0.80, "d": 14.5},
 			{"type": "sheep", "f": 0.87, "d": -5.0, "count": 8, "dir": -1, "speed": 2.0},
 		],
-		"fill": {"boulder": 1, "mud": 1, "scarf": 3, "log": 1, "ramp": 1},
+		"fill": {"boulder": 1, "mud": 1, "scarf": 3, "log": 1, "ramp": 1, "bullseye": 4, "wolf_flock": 1},
 		"set_pieces": [
 			{"prop": "gate_chorten", "f": 0.57, "d": 0.0, "face": "track", "scale": 1.0, "sink": 0.0},
 			{"prop": "potala", "from_end": 330.0, "d": 0.0, "face": "back", "scale": 1.5, "sink": 12.0, "far": true},
@@ -602,6 +723,8 @@ static func _western_gate() -> Dictionary:
 			"layers": [
 				_layer("willow", 7.0, 3.0, 80.0, {"bias": 1.3, "scale": [0.9, 1.5], "slope": 0.4, "cull": 1000, "shadow": true}),
 				_layer("grass_tuft", 30.0, 0.3, 40.0, {"ink_class": 0.85, "bias": 2.0, "scale": [0.6, 1.1], "slope": 0.6, "cull": 260, "shadow": false}),
+				_layer("grass_tall", 12.0, 0.6, 40.0, {"ink_class": 0.85, "bias": 1.8, "scale": [0.8, 1.3], "slope": 0.6, "cull": 220, "shadow": false}),
+				_layer("flowers", 28.0, 0.4, 36.0, {"ink_class": 0.85, "bias": 1.6, "scale": [0.9, 1.3], "slope": 0.6, "cull": 140, "shadow": false}),
 				_layer("bush", 5.0, 2.0, 60.0, {"bias": 1.4, "scale": [0.7, 1.3], "slope": 0.5, "cull": 360}),
 				_layer("barley_patch", 4.0, 6.0, 90.0, {"ink_class": 0.85, "bias": 1.2, "scale": [1.0, 1.5], "slope": 0.25, "cull": 520, "shadow": false}),
 				_layer("rock_a", 1.0, 3.0, 100.0, {"bias": 1.3, "scale": [0.7, 1.4], "slope": 0.7, "cull": 600, "shadow": true}),

@@ -29,7 +29,7 @@ func build(segments: Array, default_half_width: float, start: Vector3 = Vector3.
 			kappa.append(k)
 			rise.append(r)
 			widths.append(w)
-	kappa = _smooth(_smooth(kappa, 12), 12)
+	kappa = _smooth(_smooth(kappa, 8), 8)
 	rise = _smooth(_smooth(rise, 20), 20)
 	widths = _smooth(_smooth(widths, 15), 15)
 

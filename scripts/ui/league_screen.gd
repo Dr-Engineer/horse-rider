@@ -2,6 +2,8 @@ class_name LeagueScreen
 extends Screen
 ## The Season: five courses, which you have cleared, your silver, and the way to the Stable.
 
+static var _said_after := -1     # the saying is spoken once per race run, not every time you come back from the Stable
+
 var _rows: Array[WButton] = []
 var _detail: Control
 var _focus_course := 0
@@ -78,9 +80,40 @@ func build() -> void:
 		b.focus_entered.connect(board.queue_redraw)
 	_focus_course = Game.next_course()
 	focus_later(_rows[_focus_course])
+	_build_saying()
 	if Game.loan_notice:
 		Game.loan_notice = false
 		_show_note("AUNT AMA CHOEKYI LENDS YOU %d SRANG. SHE WILL MENTION IT." % Game.LOAN_AMOUNT)
+
+
+## One of the old rider's sayings, picked by how many races have been run and which course is next, and spoken by the narrator.
+func _build_saying() -> void:
+	var says := Speak.sayings()
+	if says.is_empty():
+		return
+	var saying := str(says[(Game.races_run + Game.course_index) % says.size()])
+	var who := StoryText.narrator(Game.player_id)
+	var panel := ThangkaPanel.new(true, 16, 14)
+	panel.position = Vector2(338, 50)
+	panel.custom_minimum_size = Vector2(288, 148)
+	safe.add_child(panel)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	panel.add_child(box)
+	box.add_child(TextArt.new("%s SAYS" % who, 1, UI.ORPIMENT))
+	var rule := ColorRect.new()
+	rule.color = UI.CHARCOAL
+	rule.custom_minimum_size = Vector2(254, 1)
+	box.add_child(rule)
+	var quote := UI.wrapped("\"%s\"" % saying, 254.0, 1, UI.CONCH)
+	quote.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	quote.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	box.add_child(quote)
+	if _said_after != Game.races_run:
+		_said_after = Game.races_run
+		var tw := create_tween()
+		tw.tween_interval(0.8)
+		tw.tween_callback(func() -> void: Speak.text(who.to_lower(), saying))
 
 
 func _set_status(l: Label, i: int) -> void:
@@ -155,6 +188,7 @@ func _show_note(message: String) -> void:
 	box.add_child(ok)
 	add_child(m)
 	_modal = m
+	UI.focus_chain([ok])
 	ok.pressed.connect(func() -> void:
 		m.queue_free()
 		_modal = null

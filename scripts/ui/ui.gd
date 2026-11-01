@@ -273,6 +273,30 @@ static func theme() -> Theme:
 	return t
 
 
+## Wires focus by hand for controls in a row or a column, so the arrow keys stay among them. Godot looks for the next control
+## by geometry across the whole screen, which lets a panel that sits over a menu hand focus to the menu behind it.
+## Call it once the controls are in the tree.
+static func focus_chain(items: Array, vertical: bool = true, wrap: bool = true) -> void:
+	var n := items.size()
+	for i in n:
+		var c := items[i] as Control
+		var back_i := (i - 1 + n) % n if wrap else maxi(i - 1, 0)
+		var next_i := (i + 1) % n if wrap else mini(i + 1, n - 1)
+		var back_path := (items[back_i] as Control).get_path()
+		var next_path := (items[next_i] as Control).get_path()
+		var self_path := c.get_path()
+		if vertical:
+			c.focus_neighbor_top = back_path
+			c.focus_neighbor_bottom = next_path
+			c.focus_neighbor_left = self_path
+			c.focus_neighbor_right = self_path
+		else:
+			c.focus_neighbor_left = back_path
+			c.focus_neighbor_right = next_path
+			c.focus_neighbor_top = self_path
+			c.focus_neighbor_bottom = self_path
+
+
 ## The key hints at the foot of a menu, for whichever device was used last.
 static func hint(select_text: String = "SELECT", back_text: String = "BACK") -> String:
 	if Input.get_connected_joypads().size() > 0:

@@ -1,51 +1,75 @@
 class_name Projectile
 extends RefCounted
-## An arrow, a sling stone or a thrown roped spear, flying in track space.
+## An arrow, a sling stone or a thrown roped spear. It flies through the world, not along the road: it leaves the hand with
+## the shooter's own velocity added to the launch, gravity pulls it down and the air slows it. It also keeps track of where
+## it is in track space (s, d, h), for the ground and the target poles.
+
+const GRAVITY := 9.8
+const DRAG := {"arrow": 0.0012, "stone": 0.002, "spear": 0.0016}   # deceleration is this times speed squared
+const HAUL_SPEED := 52.0
+const MAX_LIFE := 5.0
 
 var kind := "arrow"          # "arrow" | "stone" | "spear"
 var shooter: Rider
 var weapon_id := ""
+var track: Track
+var pos := Vector3.ZERO
+var last_pos := Vector3.ZERO
+var vel := Vector3.ZERO
 var s := 0.0
 var d := 0.0
 var h := 1.5
-var vs := 0.0
-var vd := 0.0
 var power := 0.0
 var damage := 0.0
 var impact := 0.0
 var life := 0.0
-var max_life := 1.0
 var alive := true
 var returning := false
 var hit_any := false
-var out_dist := 0.0
 var max_out := 18.0
+var path: PackedVector3Array = []  # where it has been, for the line drawn behind the player's own shots
 var node: Node3D = null
 var rope: MeshInstance3D = null
+var tracer: MeshInstance3D = null
+
+
+func launch(p_track: Track, from: Vector3, from_s: float, p_vel: Vector3) -> void:
+	track = p_track
+	pos = from
+	last_pos = from
+	vel = p_vel
+	s = from_s
+	_locate()
 
 
 func step(dt: float) -> void:
 	life += dt
+	last_pos = pos
 	if kind == "spear" and returning:
 		# hauled back along the rope to the thrower's hand
-		var ts := shooter.s - s
-		var td := shooter.d - d
-		var dist := sqrt(ts * ts + td * td)
-		var haul := 52.0 * dt
+		var to := shooter.hand_point(track) - pos
+		var dist := to.length()
+		var haul := HAUL_SPEED * dt
 		if dist < haul + 1.2:
 			alive = false
 			return
-		s += ts / dist * haul
-		d += td / dist * haul
+		pos += to / dist * haul
+		_locate()
 		return
-	var ps := s
-	var pd := d
-	s += vs * dt
-	d += vd * dt
-	h = maxf(0.4, h - 0.9 * dt)
+	vel += (Vector3.DOWN * GRAVITY - vel * vel.length() * float(DRAG[kind])) * dt
+	pos += vel * dt
+	_locate()
 	if kind == "spear":
-		out_dist += sqrt((s - ps) * (s - ps) + (d - pd) * (d - pd))
-		if out_dist >= max_out:
+		if pos.distance_to(shooter.hand_point(track)) >= max_out or h <= 0.1:
 			returning = true
-	elif life >= max_life:
+	elif life >= MAX_LIFE:
 		alive = false
+
+
+## Finds the nearest point of the road: a couple of steps from the last answer is plenty at these speeds.
+func _locate() -> void:
+	for i in 2:
+		s = clampf(s + (pos - track.point(s)).dot(track.tangent_at(s)), 0.0, track.length)
+	var c := track.point(s)
+	d = (pos - c).dot(track.right_at(s))
+	h = pos.y - c.y

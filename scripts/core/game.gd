@@ -17,6 +17,7 @@ const SCENES := {
 	"results": "res://scenes/results.tscn",
 	"stable": "res://scenes/stable.tscn",
 	"credits": "res://scenes/credits.tscn",
+	"phrasebook": "res://scenes/phrasebook.tscn",
 }
 const START_MONEY := 150
 const LOAN_BELOW := 20
@@ -24,6 +25,10 @@ const LOAN_AMOUNT := 60
 const SCOOP_BASE := 10
 const COURSES_PER_SEASON := 5
 const SAVE_VERSION := 1
+const WAGER_MIN := 20
+const WAGER_MAX := 200
+const WAGER_RATE := 0.15
+const VOICE_DEFAULT := 0.85
 
 var player_id := "joru"
 var season := 0
@@ -54,10 +59,18 @@ var story_pages: Array = []
 var story_next := "league"
 var loan_notice := false
 var save_path := SAVE_PATH     # tests point this somewhere else
+var settings_path := SETTINGS_PATH     # so do tests of the options; WINDHORSE_SETTINGS in the environment does it before the first read
+var test_run := false          # started from res://tests or res://tools
+
+# The side bet on the pre-race card. It lives only until the race is scored, so it is not saved.
+var wager := 0
+var wager_rival := ""
 
 # Settings
 var music_volume := 0.8
 var sfx_volume := 0.9
+var voice_volume := VOICE_DEFAULT
+var voice_language := 0     # 0 both, 1 Tibetan, 2 English
 var fullscreen := false
 
 var _gd: GDScript
@@ -69,6 +82,7 @@ var _changing := false
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	InputSetup.register()
+	_keep_tests_off_the_players_files()
 	_load_settings()
 	var layer := CanvasLayer.new()
 	layer.layer = 120
@@ -78,6 +92,20 @@ func _ready() -> void:
 	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(_fade_rect)
 	_fade_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+## A test scene or a script run from the command line (res://tests, res://tools, -s) saves to scratch files, never the player's
+## own save or settings. A test may still point Game.save_path and Game.settings_path anywhere it likes, and WINDHORSE_SETTINGS
+## in the environment names the settings file before the first read.
+func _keep_tests_off_the_players_files() -> void:
+	for a: String in OS.get_cmdline_args():
+		if a.begins_with("res://tests/") or a.begins_with("res://tools/") or a == "-s" or a == "--script":
+			save_path = "user://test_save.cfg"
+			settings_path = "user://test_settings.cfg"
+			test_run = true
+	var env_path := OS.get_environment("WINDHORSE_SETTINGS")
+	if env_path != "":
+		settings_path = env_path
 
 
 ## Everything Race needs to set up a race.
@@ -99,7 +127,8 @@ func race_config() -> Dictionary:
 
 # ------------------------------------------------------------------ scene flow
 
-func go(key: String) -> void:
+## Fades to another scene. A voice that is speaking is cut off, unless keep_voice (the race hands its last line on to the results).
+func go(key: String, keep_voice: bool = false) -> void:
 	var path: String = SCENES.get(key, key)
 	if _changing:
 		return
@@ -108,6 +137,8 @@ func go(key: String) -> void:
 		return
 	_changing = true
 	Sfx.stop_loops()
+	if not keep_voice:
+		Speak.stop()
 	var tw := create_tween()
 	tw.tween_property(_fade_rect, "color:a", 1.0, 0.14)
 	await tw.finished
@@ -148,9 +179,13 @@ func quit_game() -> void:
 
 func _load_settings() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(SETTINGS_PATH) == OK:
+	if cf.load(settings_path) == OK:
 		music_volume = float(cf.get_value("audio", "music", music_volume))
 		sfx_volume = float(cf.get_value("audio", "sfx", sfx_volume))
+		# A file from before voices existed has no voice key. Someone who muted the game stays muted.
+		var voice_default := 0.0 if sfx_volume <= 0.001 else VOICE_DEFAULT
+		voice_volume = clampf(float(cf.get_value("audio", "voice", voice_default)), 0.0, 1.0)
+		voice_language = clampi(int(cf.get_value("audio", "voice_language", 0)), 0, 2)
 		fullscreen = bool(cf.get_value("video", "fullscreen", false))
 	_apply_window()
 
@@ -159,8 +194,25 @@ func save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "music", music_volume)
 	cf.set_value("audio", "sfx", sfx_volume)
+	cf.set_value("audio", "voice", voice_volume)
+	cf.set_value("audio", "voice_language", voice_language)
 	cf.set_value("video", "fullscreen", fullscreen)
-	cf.save(SETTINGS_PATH)
+	cf.save(settings_path)
+
+
+## True when the player has turned music, effects and voices all the way down.
+func sound_is_off() -> bool:
+	return music_volume <= 0.001 and sfx_volume <= 0.001 and voice_volume <= 0.001
+
+
+func set_voice_volume(v: float) -> void:
+	voice_volume = clampf(v, 0.0, 1.0)
+	if Sfx.has_method("set_voice_volume"):
+		Sfx.call("set_voice_volume", voice_volume)
+
+
+func set_voice_language(i: int) -> void:
+	voice_language = clampi(i, 0, 2)
 
 
 func set_fullscreen(on: bool) -> void:
@@ -201,11 +253,21 @@ func new_game(pid: String) -> void:
 	last_result = {}
 	race_log = {"knockdowns": {}}
 	loan_notice = false
+	clear_wager()
 	save_game()
 
 
 func has_save() -> bool:
 	return FileAccess.file_exists(save_path)
+
+
+## Whose story the saved ride is, so the title can greet with the right narrator before anything is loaded.
+func saved_player_id() -> String:
+	var cf := ConfigFile.new()
+	if cf.load(save_path) != OK:
+		return player_id
+	var pid := str(cf.get_value("game", "player_id", player_id))
+	return pid if pid == "yangkyi" or pid == "joru" else player_id
 
 
 func save_game() -> void:
@@ -249,6 +311,7 @@ func load_game() -> bool:
 		owned_horses = ["old_tsampa"]
 	if owned_weapons.is_empty():
 		owned_weapons = ["fists"]
+	clear_wager()
 	return true
 
 
@@ -521,6 +584,28 @@ func note_knockdown(rival_id: String) -> void:
 	race_log["knockdowns"] = kd
 
 
+# ------------------------------------------------------------------ the side bet
+
+## What a rival offers to stake: about 15% of your silver in steps of 5, from 20 to 200, and never so much that losing it
+## would drop you under the loan line, so a lost bet can't turn into a loan. 0 means no offer is made.
+func wager_stake() -> int:
+	var room := money - LOAN_BELOW
+	if room < WAGER_MIN:
+		return 0
+	var raw := roundi(money * WAGER_RATE / 5.0) * 5
+	return mini(clampi(raw, WAGER_MIN, WAGER_MAX), room)
+
+
+func place_wager(rival_id: String, stake: int) -> void:
+	wager = clampi(stake, 0, maxi(money - LOAN_BELOW, 0))
+	wager_rival = rival_id if wager > 0 else ""
+
+
+func clear_wager() -> void:
+	wager = 0
+	wager_rival = ""
+
+
 # ------------------------------------------------------------------ race results
 
 func _prop(o: Variant, prop: String, default: Variant) -> Variant:
@@ -552,6 +637,10 @@ func apply_race_result(results: Array) -> Dictionary:
 			"bounty": int(_prop(e, "bounty", 0)),
 			"fines": int(_prop(e, "fines", 0)),
 			"silver": int(_prop(e, "silver", -1)),
+			"hats": int(_prop(e, "hats", 0)),
+			"near_misses": int(_prop(e, "near_misses", 0)),
+			"overtakes": int(_prop(e, "overtakes", 0)),
+			"best_streak": int(_prop(e, "best_streak", 0)),
 		})
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a["place"]) < int(b["place"]))
 	var prow: Dictionary = {}
@@ -560,7 +649,7 @@ func apply_race_result(results: Array) -> Dictionary:
 			prow = r
 	var n := maxi(rows.size(), 8)
 	if prow.is_empty():
-		prow = {"place": n, "name": "YOU", "rival_id": "", "is_player": true, "time": 0.0, "knockdowns": 0, "crashed": 0, "scoops": 0, "bounty": 0, "fines": 0, "silver": 0}
+		prow = {"place": n, "name": "YOU", "rival_id": "", "is_player": true, "time": 0.0, "knockdowns": 0, "crashed": 0, "scoops": 0, "bounty": 0, "fines": 0, "silver": 0, "hats": 0, "near_misses": 0, "overtakes": 0, "best_streak": 0}
 	var place := int(prow["place"])
 	var season_before := season
 	var course_done := course_index
@@ -575,7 +664,17 @@ func apply_race_result(results: Array) -> Dictionary:
 	var scoop_silver := int(prow["silver"]) if int(prow["silver"]) >= 0 else scoop_count * scoop_value(season)
 	var fine := int(prow["fines"])
 	var gained := prize + bounty + scoop_silver
-	money = maxi(0, money + gained - fine)
+	# The side bet: ahead of the rival you gain the stake, behind them you lose it. A rival who isn't in the field voids it.
+	var stake := 0
+	var bet_won := false
+	var bet_rival := wager_rival
+	if wager > 0 and bet_rival != "":
+		for r in rows:
+			if str(r["rival_id"]) == bet_rival:
+				stake = wager
+				bet_won = place < int(r["place"])
+	clear_wager()
+	money = maxi(0, money + gained - fine + (stake if bet_won else -stake))
 
 	var needed := needed_place(season, course_index)
 	var ok := place >= 1 and place <= needed
@@ -617,10 +716,15 @@ func apply_race_result(results: Array) -> Dictionary:
 					text = info["grudge"] if int(grudges.get(info["id"], 0)) > 0 else StoryText.LOSE_LINES[(races_run + int(r["place"])) % StoryText.LOSE_LINES.size()]
 				line = {"name": info["name"], "line": text, "id": info["id"]}
 				break
+	if stake > 0:
+		var bet_info := rival(bet_rival)
+		line = {"name": bet_info["name"], "line": StoryText.wager_line(bet_rival, "won" if bet_won else "lost"), "id": bet_rival}
 	last_result = {
 		"rows": rows, "place": place, "field": n, "time": float(prow["time"]),
 		"course_index": course_done, "season": season_before,
 		"prize": prize, "bounty": bounty, "knockdowns": kd, "scoop_count": scoop_count, "scoops": scoop_silver, "fine": fine,
+		"wager": stake, "wager_rival": bet_rival if stake > 0 else "", "wager_won": bet_won,
+		"hats": int(prow["hats"]), "near_misses": int(prow["near_misses"]), "overtakes": int(prow["overtakes"]), "best_streak": int(prow["best_streak"]),
 		"qualified": ok, "needed": needed, "money_before": money_before, "money_after": money,
 		"loan": loan_given, "season_cleared": cleared, "won_game": won, "rival_line": line,
 	}

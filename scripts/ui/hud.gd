@@ -10,6 +10,15 @@ const RIVAL_LEAVE := 31.0
 const CHEVRON_RANGE := 12.0
 const FINISH_DELAY := 1.2
 const BASE_HALF := 5.0
+const SUB_W := 206.0          # the subtitle strip under the rival plate
+const SUB_PAD := 8.0
+const SUB_PORTRAIT := 24.0
+const SUB_SIDE := 33.0        # the portrait, and room beside it, which the first two rows of text give up
+const SUB_DROP := 3.0         # rows below the portrait start a little lower so they don't touch its frame
+const SUB_MIN_SHOW := 0.7     # a line is on screen at least this long before the next one may replace it
+const SUB_SLIDE := 0.2
+const MAX_INFO_LINES := 3
+const SIGHT_HIT_TIME := 0.3
 
 var race: Node
 var _canvas: HudCanvas
@@ -39,8 +48,11 @@ var _hint_age := 0.0
 var _comic_i := 0
 var _trail_hp := 1.0
 var _hurt := 0.0
+var _sight_hit := 0.0
 var _prev_hp := 1.0
 var _wname_cache: Dictionary = {}
+var _sub: Dictionary = {}          # the subtitle on show, laid out when it arrived
+var _sub_next: Dictionary = {}     # one waiting line; a newer one replaces it
 
 
 func _init() -> void:
@@ -52,13 +64,30 @@ func _ready() -> void:
 	_canvas = HudCanvas.new()
 	_canvas.hud = self
 	add_child(_canvas)
-	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN   # the mouse buttons strike, so the pointer would only be in the way
+	_take_pointer()
+	if Input.mouse_mode == Input.MOUSE_MODE_CONFINED_HIDDEN:
+		get_viewport().warp_mouse(get_viewport().get_visible_rect().size * Vector2(0.5, 0.4))
 	_canvas.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build_pause()
 
 
 func _exit_tree() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+## In a race the mouse is the sight, so the pointer is hidden and kept inside the window. Only while the game has focus, or
+## it would trap the pointer of someone working elsewhere. Never in a test run: keeping the pointer in a window clips the
+## real cursor on the real desktop, and tests must never touch that.
+func _take_pointer() -> void:
+	var grab := not Game.test_run and get_window().has_focus()
+	Input.mouse_mode = Input.MOUSE_MODE_CONFINED_HIDDEN if grab else Input.MOUSE_MODE_VISIBLE
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_IN and not _paused and is_inside_tree():
+		_take_pointer()
+	elif what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 
 func bind(r: Node) -> void:
@@ -68,6 +97,7 @@ func bind(r: Node) -> void:
 	_connect(r, "race_finished", _on_race_finished)
 	_connect(r, "rider_hit", _on_rider_hit)
 	_connect(r, "rider_crashed", _on_rider_crashed)
+	_connect(r, "chatter", _on_chatter)
 	Sfx.music("final" if Game.is_final(Game.season, Game.course_index) else "race")
 	_cache_course()
 
@@ -103,22 +133,49 @@ func _cache_course() -> void:
 
 # ------------------------------------------------------------------ signals
 
+## The words of a readout without its numbers, so "STREAK X3" after "STREAK X2" is known for the same readout.
+static func _readout_key(s: String) -> String:
+	var out := s
+	for ch in "0123456789+-":
+		out = out.replace(ch, "")
+	return " ".join(out.split(" ", false))
+
+
 func _on_announcement(text: String, kind: String) -> void:
+	var up := text.to_upper()
+	var short_big := kind == "big" and (up.is_valid_int() or up == "GO!")
+	var key := "" if short_big else _readout_key(up)
+	# The same readout again (a bigger streak, another near miss) refreshes the one on show instead of piling up beside it.
+	if key != "":
+		for x in _announce:
+			if x["kind"] == kind and x["key"] == key:
+				x["text"] = up
+				x["age"] = 0.0
+				return
 	_comic_i += 1
-	var a := {"text": text.to_upper(), "kind": kind, "age": 0.0, "tilt": randf_range(-0.14, 0.14), "dx": randf_range(-50.0, 50.0), "dy": (-22.0 if _comic_i % 2 == 0 else 26.0) + randf_range(-6.0, 6.0)}
-	var short_big := kind == "big" and (text.is_valid_int() or text.to_upper() == "GO!")
+	var a := {"text": up, "kind": kind, "key": key, "age": 0.0, "tilt": randf_range(-0.05, 0.05), "dx": randf_range(-36.0, 36.0), "dy": (-12.0 if _comic_i % 2 == 0 else 12.0) + randf_range(-2.0, 2.0)}
 	match kind:
 		"big":
 			a["life"] = 0.95 if short_big else 1.8
 			a["huge"] = short_big
-			if short_big:
-				var keep: Array[Dictionary] = []
-				for x in _announce:
-					if not bool(x.get("huge", false)):
-						keep.append(x)
-				_announce = keep
+			# one big word at a time: a new one takes the place of the last of its size
+			var keep: Array[Dictionary] = []
+			for x in _announce:
+				if not (x["kind"] == "big" and bool(x.get("huge", false)) == short_big):
+					keep.append(x)
+			_announce = keep
 		"info":
 			a["life"] = 2.4
+			var infos := 0
+			for x in _announce:
+				if x["kind"] == "info":
+					infos += 1
+			while infos >= MAX_INFO_LINES:
+				for i in _announce.size():
+					if _announce[i]["kind"] == "info":
+						_announce.remove_at(i)
+						break
+				infos -= 1
 		_:
 			a["life"] = 0.58
 			var comics := 0
@@ -137,7 +194,9 @@ func _on_race_started() -> void:
 	_started = true
 
 
-func _on_rider_hit(attacker: Object, victim: Object, _info: Dictionary) -> void:
+func _on_rider_hit(attacker: Object, victim: Object, info: Dictionary) -> void:
+	if attacker == _p and str(info.get("klass", "")) == "ranged" and not info.get("ignored", false):
+		_sight_hit = SIGHT_HIT_TIME
 	if victim != null and attacker != null and is_instance_valid(victim) and is_instance_valid(attacker):
 		_last_hit[victim.get_instance_id()] = {"attacker": attacker, "t": _t}
 
@@ -156,9 +215,85 @@ func _on_race_finished(results: Array) -> void:
 	if _finished:
 		return
 	_finished = true
+	_sub = {}
+	_sub_next = {}
 	Game.apply_race_result(results)
 	await get_tree().create_timer(FINISH_DELAY).timeout
-	Game.go("results")
+	Game.go("results", true)
+
+
+# ------------------------------------------------------------------ subtitles
+
+## Race.chatter(rider, line): someone spoke. `line` is what Sfx.say returned (f, t, g, l, d) plus "speaker". rider may be
+## null for the starter or a steward. One line shows at a time, and a new one waits for the last to have had its moment.
+func _on_chatter(rider: Object, line: Dictionary) -> void:
+	var entry := _make_subtitle(rider, line)
+	if entry.is_empty():
+		return
+	if _sub.is_empty():
+		_sub = entry
+		_sub_next = {}
+	else:
+		_sub_next = entry
+
+
+## Words flowed into rows. The first two rows sit beside the portrait when there is one, so they are narrower.
+func _flow(text: String, first_row: int, has_portrait: bool, max_rows: int) -> Array[String]:
+	var rows: Array[String] = []
+	var cur := ""
+	for word: String in text.split(" ", false):
+		var room := SUB_W - 2.0 * SUB_PAD - (SUB_SIDE if has_portrait and first_row + rows.size() < 2 else 0.0)
+		var test := word if cur == "" else cur + " " + word
+		if cur != "" and UI.text_width(test) > room:
+			rows.append(cur)
+			cur = word
+		else:
+			cur = test
+	if cur != "":
+		rows.append(cur)
+	if rows.size() > max_rows:
+		rows.resize(max_rows)
+		rows[max_rows - 1] = rows[max_rows - 1].rstrip(" .,!?") + "..."
+	return rows
+
+
+func _make_subtitle(rider: Object, line: Dictionary) -> Dictionary:
+	var said := str(line.get("t", "")).strip_edges().to_upper()
+	if said == "":
+		return {}
+	var gloss := str(line.get("g", "")).strip_edges().to_upper() if str(line.get("l", "en")) == "bo" else ""
+	var who := ""
+	var tex: Texture2D = null
+	var has_rider := rider != null and is_instance_valid(rider)
+	if has_rider:
+		who = str(_g(rider, "display_name", ""))
+		tex = UI.texture(str(_g(rider, "portrait", "")))
+	if who == "":
+		who = str(line.get("speaker", ""))
+	var rows: Array = [{"s": _short_name(who, SUB_W - 2.0 * SUB_PAD - (SUB_SIDE if has_rider else 0.0)), "c": UI.ORPIMENT}]
+	for r in _flow(said, 1, has_rider, 4):
+		rows.append({"s": r, "c": UI.CONCH})
+	if gloss != "":
+		for r in _flow(gloss, rows.size(), has_rider, 2):
+			rows.append({"s": r, "c": UI.ASH})
+	var text_h := rows.size() * 12.0 + (SUB_DROP if has_rider and rows.size() > 2 else 0.0)
+	var d := float(line.get("d", 0.0))
+	return {
+		"rows": rows, "tex": tex, "portrait": has_rider,
+		"initial": who.substr(0, 1), "age": 0.0,
+		"life": maxf(d, 0.035 * (said.length() + gloss.length() * 0.5)) + 1.0,
+		"h": maxf(text_h, SUB_PORTRAIT if has_rider else 0.0) + 18.0,
+	}
+
+
+func _tick_subtitle(delta: float) -> void:
+	if _sub.is_empty():
+		return
+	_sub["age"] = float(_sub["age"]) + delta
+	var age := float(_sub["age"])
+	if age >= float(_sub["life"]) or (not _sub_next.is_empty() and age >= SUB_MIN_SHOW):
+		_sub = _sub_next
+		_sub_next = {}
 
 
 # ------------------------------------------------------------------ per-frame state
@@ -188,6 +323,7 @@ func _update(delta: float) -> void:
 		if float(a["age"]) < float(a["life"]):
 			alive.append(a)
 	_announce = alive
+	_tick_subtitle(delta)
 
 	var cd := float(_g(race, "countdown", 0.0))
 	if cd > 0.0 or _t < 0.05:
@@ -209,6 +345,7 @@ func _update(delta: float) -> void:
 		_hurt = 0.28
 	_prev_hp = hp_now
 	_hurt = maxf(_hurt - delta, 0.0)
+	_sight_hit = maxf(_sight_hit - delta, 0.0)
 	_trail_hp = hp_now if hp_now >= _trail_hp else move_toward(_trail_hp, hp_now, delta * 0.35)
 	var lungta := float(_g(_p, "lungta", 0.0))
 	if floorf(lungta) > floorf(_prev_lungta) and lungta > 0.0:
@@ -291,7 +428,10 @@ func _set_paused(on: bool) -> void:
 		_options.queue_free()
 		_options = null
 	get_tree().paused = on
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if on else Input.MOUSE_MODE_HIDDEN
+	if on:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	else:
+		_take_pointer()
 	Sfx.duck(on)
 	if race != null and is_instance_valid(race):
 		race.set("paused_for_ui", on)
@@ -356,13 +496,16 @@ func paint(c: Control) -> void:
 		c.draw_rect(Rect2(0, 0, w, h), Color(0.09, 0.07, 0.1, 0.38 * _vignette))
 	_paint_player_plate(c)
 	_paint_rival_plate(c, w)
+	_paint_subtitle(c, w)
 	_paint_place(c, w)
 	_paint_equipment(c, w, h)
+	_paint_speed(c, w, h)
 	_paint_chevrons(c, w, h)
 	_paint_quiet(c, w)
 	_paint_rest(c, w, h)
 	_paint_announcements(c, w, h)
 	_paint_countdown(c, w, h)
+	_paint_sight(c, w, h)
 
 
 func _flash(rate: float = 6.0) -> bool:
@@ -399,8 +542,8 @@ func _paint_player_plate(c: Control) -> void:
 	UI.text(c, Vector2(x + 68, y + 37), _short_name(name, 74.0), 1, UI.CONCH)
 	var wy := r.end.y + 4.0
 	if teeter:
-		UI.text(c, Vector2(r.position.x + 2, wy), "TEETERING!", 2, UI.VERMILION if _flash() else UI.ORPIMENT)
-		wy += 24.0
+		UI.text(c, Vector2(r.position.x + 2, wy), "TEETERING!", 1, UI.VERMILION if _flash() else UI.ORPIMENT)
+		wy += 13.0
 	if full:
 		UI.text(c, Vector2(r.position.x + 2, wy), "SECOND WIND!", 1, UI.ORPIMENT if _flash(5.0) else UI.CONCH)
 		UI.text(c, Vector2(r.position.x + 2, wy + 12), "PRESS ENTER", 1, UI.BONE)
@@ -426,6 +569,10 @@ func _paint_rival_plate(c: Control, w: float) -> void:
 		c.draw_rect(box, UI.CHARCOAL)
 		UI.text_c(c, box.position.x + 17, box.position.y + 11, "?", 1, UI.ASH, false)
 	UI.rect_frame(c, Rect2(box.position - Vector2(1, 1), box.size + Vector2(2, 2)), UI.GOLD, 1.0)
+	if _is_bet_rival(rv):
+		var coin := UI.icon("coin")
+		if coin != null:
+			c.draw_texture(coin, box.end - Vector2(12, 12))
 	var tx := px + 56
 	UI.text(c, Vector2(tx, py), _short_name(str(_g(rv, "display_name", "RIVAL")), rr.end.x - tx - 9), 1, UI.CONCH)
 	var hp := float(_g(rv, "health", 100.0)) / maxf(float(_g(rv, "max_health", 100.0)), 1.0)
@@ -434,6 +581,44 @@ func _paint_rival_plate(c: Control, w: float) -> void:
 	UI.text(c, Vector2(tx, py + 31), "SHAKE", 1, UI.ASH, false)
 	var sh := float(_g(rv, "shake", 0.0))
 	UI.bar(c, Rect2(tx, py + 41, rr.end.x - tx - 9, 7), sh / 100.0, UI.CONCH if (sh > 70.0 and _flash()) else UI.SAFFRON)
+
+
+## True for the rider the player has a side bet with.
+func _is_bet_rival(r: Object) -> bool:
+	return Game.wager > 0 and Game.wager_rival != "" and str(_g(r, "rival_id", "")) == Game.wager_rival
+
+
+## The strip under the rival plate: who spoke, what they said and, for Tibetan, what it means. It slides in from the right,
+## takes the plate's place if no rival is near, and goes before the player's rider or the place counter could be covered.
+func _paint_subtitle(c: Control, w: float) -> void:
+	if _sub.is_empty():
+		return
+	var age := float(_sub["age"])
+	var life := float(_sub["life"])
+	var slide := minf(minf(age / SUB_SLIDE, 1.0), clampf((life - age) / SUB_SLIDE, 0.0, 1.0))
+	var ease_v := 1.0 - pow(1.0 - slide, 3.0)
+	var plate_ease := 1.0 - pow(1.0 - _rival_slide, 3.0)
+	var r := Rect2(w - SUB_W - 4.0 + (1.0 - ease_v) * (SUB_W + 12.0), lerpf(4.0, 76.0, plate_ease), SUB_W, float(_sub["h"]))
+	UI.draw_panel(c, r, true, Color(UI.INK, 0.78), 3)
+	var x0 := r.position.x + SUB_PAD
+	var y0 := r.position.y + 9.0
+	var text_x := x0
+	if bool(_sub["portrait"]):
+		var box := Rect2(x0, y0, SUB_PORTRAIT, SUB_PORTRAIT)
+		c.draw_rect(box.grow(1.0), UI.INK)
+		var tex: Texture2D = _sub["tex"]
+		if tex != null:
+			c.draw_texture_rect(tex, box, false)
+		else:
+			c.draw_rect(box, UI.CHARCOAL)
+			UI.text_c(c, box.position.x + 12.0, box.position.y + 6.0, str(_sub["initial"]), 1, UI.ASH, false)
+		UI.rect_frame(c, box.grow(1.0), UI.GOLD, 1.0)
+		text_x = x0 + SUB_SIDE
+	var rows: Array = _sub["rows"]
+	for i in rows.size():
+		var row: Dictionary = rows[i]
+		var below := bool(_sub["portrait"]) and i >= 2
+		UI.text(c, Vector2(x0 if below else text_x, y0 + i * 12.0 + (SUB_DROP if below else 0.0)), str(row["s"]), 1, row["c"], false)
 
 
 func _place_of_player() -> int:
@@ -453,15 +638,15 @@ func _paint_place(c: Control, w: float) -> void:
 	var col := UI.ORPIMENT if place == 1 else (UI.CONCH if place <= 3 else UI.ROSE)
 	# Sits on its own plate: the sky behind it can be any colour, and it must always read.
 	var place_text := "%s/%d" % [UI.ordinal(place), total]
-	var plate_w := UI.text_width(place_text, 3) + 14.0
-	var plate := Rect2(w * 0.5 - plate_w * 0.5, 0.0, plate_w, 33.0)
+	var plate_w := UI.text_width(place_text, 2) + 12.0
+	var plate := Rect2(w * 0.5 - plate_w * 0.5, 0.0, plate_w, 23.0)
 	c.draw_rect(plate, UI.INK)
 	c.draw_rect(Rect2(plate.position.x, plate.end.y - 1.0, plate.size.x, 1.0), UI.ORPIMENT)
-	UI.text_c(c, w * 0.5, 4, place_text, 3, col)
+	UI.text_c(c, w * 0.5, 2, place_text, 2, col)
 	# Progress thread: every rider a dot, the player in gold.
 	var tw := 190.0
 	var tx := w * 0.5 - tw * 0.5
-	var ty := 40.0
+	var ty := 29.0
 	c.draw_rect(Rect2(tx - 1, ty, tw + 2, 5), UI.INK)
 	c.draw_rect(Rect2(tx, ty + 2, tw, 1), UI.BONE)
 	c.draw_rect(Rect2(tx - 3, ty - 1, 3, 7), UI.CONCH)
@@ -470,8 +655,15 @@ func _paint_place(c: Control, w: float) -> void:
 		if not (r is Object) or r == _p or not is_instance_valid(r as Object):
 			continue
 		var f := clampf(float(_g(r as Object, "s", 0.0)) / _length, 0.0, 1.0)
+		if _is_bet_rival(r as Object):   # the one you have a wager with: a red bead, drawn over the rest
+			continue
 		c.draw_rect(Rect2(tx + f * tw - 2, ty, 4, 5), UI.INK)
 		c.draw_rect(Rect2(tx + f * tw - 1, ty + 1, 2, 3), UI.ASH)
+	for r: Variant in _riders:
+		if r is Object and r != _p and is_instance_valid(r as Object) and _is_bet_rival(r as Object):
+			var fb := clampf(float(_g(r as Object, "s", 0.0)) / _length, 0.0, 1.0)
+			c.draw_rect(Rect2(tx + fb * tw - 3, ty - 2, 6, 9), UI.INK)
+			c.draw_rect(Rect2(tx + fb * tw - 2, ty - 1, 4, 7), UI.VERMILION)
 	if _p != null:
 		var fp := clampf(float(_g(_p, "s", 0.0)) / _length, 0.0, 1.0)
 		c.draw_rect(Rect2(tx + fp * tw - 3, ty - 2, 6, 9), UI.INK)
@@ -506,7 +698,7 @@ func _paint_equipment(c: Control, w: float, h: float) -> void:
 			c.draw_texture(ric, Vector2(x2, y))
 		var ammo := int(_g(_p, "ammo", 0))
 		var drawing := bool(_g(_p, "drawing", false))
-		var ammo_text := "x%d" % ammo if ammo < 90 else "X"
+		var ammo_text := "x%d" % ammo
 		if rid == "roped_spear":
 			ammo_text = ""
 		UI.text(c, Vector2(x2 + 19, y + 3), ammo_text, 1, UI.ORPIMENT if drawing else UI.CONCH, false)
@@ -524,6 +716,92 @@ func _paint_equipment(c: Control, w: float, h: float) -> void:
 		c.draw_texture(sh, Vector2(x3, y), mod)
 	if bool(_g(_p, "blocking", false)):
 		UI.rect_frame(c, Rect2(x3 - 2, y - 2, 20, 20), UI.ORPIMENT, 1.0)
+
+
+## Speed in km/h, the horse's gait, and how far into a wind trail the rider is.
+func _paint_speed(c: Control, w: float, h: float) -> void:
+	if _p == null:
+		return
+	var r := Rect2(w - 94.0, h - 47.0, 90.0, 43.0)
+	UI.draw_panel(c, r, false, Color(UI.INK, 0.86))
+	var state := str(_g(_p, "state", "ride"))
+	var riding := state == "ride" or state == "airborne" or state == "finished"
+	var kmh := roundi(float(_g(_p, "speed", 0.0)) * 3.6) if riding else 0
+	var whip := bool(_g(_p, "whip_on", false))
+	var digits := str(kmh)
+	var dx := r.end.x - 41.0 - UI.text_width(digits, 2)
+	UI.text(c, Vector2(dx, r.position.y + 3.0), digits, 2, UI.ORPIMENT if whip else UI.CONCH, false)
+	UI.text(c, Vector2(r.end.x - 36.0, r.position.y + 12.0), "KM/H", 1, UI.BONE, false)
+	if riding and _p.has_method("gait"):
+		UI.text_c(c, r.position.x + r.size.x * 0.5, r.position.y + 23.0, str(_p.call("gait")).to_upper(), 1, UI.SLATE, false)
+	var draft := clampf(float(_g(_p, "draft", 0.0)), 0.0, 1.0) if riding else 0.0
+	UI.bar(c, Rect2(r.position.x + 7.0, r.position.y + 35.0, r.size.x - 14.0, 4.0), draft, UI.TURQUOISE)
+	if draft > 0.5 and riding:
+		UI.text_c(c, w * 0.5, h - 46.0, "IN THE WIND TRAIL", 1, UI.CONCH if draft > 0.75 else UI.TURQUOISE, true)
+	# just slammed someone: hit them now and it lands harder
+	if float(_g(_p, "shoved_t", 0.0)) > 0.0 and riding:
+		var shoved: Object = _g(_p, "shoved", null) as Object
+		if shoved != null and bool(shoved.call("is_riding")):
+			UI.text_c(c, w * 0.5, h - 59.0, "HIT THEM NOW  x%.1f" % Race.SLAM_DAMAGE, 1, UI.ORPIMENT if _flash(8.0) else UI.CONCH, true)
+
+
+## The sight for a ranged weapon. It goes where the mouse goes, nothing aims for you. While a shot is drawn it closes up as
+## the draw comes on, and the marks below it show where a shot will really fall at 15, 30 and 45 metres: put the right mark on
+## the target, or just aim above it. It flashes when a shot lands.
+func _paint_sight(c: Control, w: float, h: float) -> void:
+	if _p == null or race == null:
+		return
+	var rid := str(_g(_p, "ranged_id", ""))
+	var state := str(_g(_p, "state", "ride"))
+	if rid == "" or int(_g(_p, "ammo", 0)) == 0 or (state != "ride" and state != "airborne"):
+		return
+	var at := (_g(race, "aim_screen", Vector2(0.5, 0.4)) as Vector2) * Vector2(w, h)
+	var drawing := bool(_g(_p, "drawing", false))
+	var draw := clampf(float(_g(_p, "draw_amount", 0.0)), 0.0, 1.0)
+	var col := UI.CONCH if not drawing else (UI.ORPIMENT if draw >= 1.0 else UI.CONCH)
+	var a := 1.0 if drawing else 0.45
+	if _sight_hit > 0.0:
+		col = UI.VERMILION
+		a = 1.0
+		var out := 4.0 + 5.0 * _sight_hit / SIGHT_HIT_TIME
+		for sx: float in [-1.0, 1.0]:
+			for sy: float in [-1.0, 1.0]:
+				_sight_line(c, at + Vector2(sx, sy) * out, at + Vector2(sx, sy) * (out + 4.0), col, a)
+	var gap := lerpf(12.0, 3.0, draw) if drawing else 7.0
+	var tick := 6.0
+	c.draw_rect(Rect2(at - Vector2(2.0, 2.0), Vector2(4.0, 4.0)), Color(UI.INK, 0.75 * a))
+	c.draw_rect(Rect2(at - Vector2(1.0, 1.0), Vector2(2.0, 2.0)), Color(col, a))
+	_sight_line(c, at + Vector2(-gap - tick, 0.0), at + Vector2(-gap, 0.0), col, a)
+	_sight_line(c, at + Vector2(gap, 0.0), at + Vector2(gap + tick, 0.0), col, a)
+	_sight_line(c, at + Vector2(0.0, -gap - tick), at + Vector2(0.0, -gap), col, a)
+	if not drawing:
+		_sight_line(c, at + Vector2(0.0, gap), at + Vector2(0.0, gap + tick), col, a)
+		return
+	# the drop at each range, for the launch speed this draw would give right now
+	var muzzle: float = Race.launch_speed(rid, draw)
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var px_per_tan := h * 0.5 / tan(deg_to_rad(cam.fov * 0.5))
+	var reach := float(Game.weapon(rid).get("reach", 45.0))
+	var bottom := at.y
+	for i in 3:
+		var range_m := 15.0 * float(i + 1)
+		if range_m > reach + 3.0:
+			break
+		var t := range_m / muzzle
+		var drop := 0.5 * Projectile.GRAVITY * t * t
+		var y := at.y + drop / (range_m + 6.0) * px_per_tan
+		y = maxf(y, bottom + 3.0)
+		bottom = y
+		var half := 5.0 - float(i)
+		_sight_line(c, Vector2(at.x - half, y), Vector2(at.x + half, y), col, a)
+	_sight_line(c, at + Vector2(0.0, gap), Vector2(at.x, bottom), col, 0.55)
+
+
+func _sight_line(c: Control, from: Vector2, to: Vector2, col: Color, alpha: float) -> void:
+	c.draw_line(from, to, Color(UI.INK, 0.75 * alpha), 3.0)
+	c.draw_line(from, to, Color(col, alpha), 1.0)
 
 
 func _chevron(c: Control, x: float, y: float, dir: float, n: int, col: Color) -> void:
@@ -570,9 +848,9 @@ func _paint_quiet(c: Control, w: float) -> void:
 		return
 	var s := "QUIET GROUND - HANDS DOWN"
 	var tw := UI.text_width(s, 1) + 24.0
-	var rect := Rect2(w * 0.5 - tw * 0.5, 54.0, tw, 17.0)
+	var rect := Rect2(w * 0.5 - tw * 0.5, 40.0, tw, 17.0)
 	var a := _quiet_alpha
-	c.draw_rect(rect, Color(UI.CONCH, 0.92 * a))
+	c.draw_rect(rect, Color(UI.CONCH, 0.8 * a))
 	UI.rect_frame(c, rect, Color(UI.LAPIS, a), 1.0)
 	UI.rect_frame(c, Rect2(rect.position + Vector2(2, 2), rect.size - Vector2(4, 4)), Color(UI.TURQUOISE, a), 1.0)
 	UI.text_c(c, w * 0.5, rect.position.y + 4, s, 1, UI.LAPIS_DEEP, false, a)
@@ -583,18 +861,18 @@ func _paint_rest(c: Control, w: float, h: float) -> void:
 		return
 	var state := str(_g(_p, "state", "ride"))
 	if state == "rest":
-		UI.text_c(c, w * 0.5, h * 0.22, "RESTING", 3, UI.CONCH)
+		UI.text_c(c, w * 0.5, h * 0.17, "RESTING", 2, UI.CONCH)
 		var left := float(_g(_p, "rest_left", 0.0))
-		UI.text_c(c, w * 0.5, h * 0.32, "%d" % ceili(left), 6, UI.ORPIMENT)
+		UI.text_c(c, w * 0.5, h * 0.24, "%d" % ceili(left), 3, UI.ORPIMENT)
 		if _rest_initial >= 5.0:
 			var col := UI.ORPIMENT if _flash(5.0) else UI.CONCH
-			UI.text_c(c, w * 0.5, h * 0.56, "TAP TO GET UP FASTER", 2, col)
+			UI.text_c(c, w * 0.5, h * 0.34, "TAP TO GET UP FASTER", 1, col)
 	elif state == "run":
-		UI.text_c(c, w * 0.5, h * 0.3, "RUN TO YOUR HORSE!", 2, UI.CONCH)
+		UI.text_c(c, w * 0.5, h * 0.2, "RUN TO YOUR HORSE!", 1, UI.CONCH)
 
 
 func _paint_announcements(c: Control, w: float, h: float) -> void:
-	var info_y := 74.0
+	var info_y := 60.0
 	for a in _announce:
 		var age := float(a["age"])
 		var life := float(a["life"])
@@ -602,27 +880,27 @@ func _paint_announcements(c: Control, w: float, h: float) -> void:
 		var text: String = a["text"]
 		match str(a["kind"]):
 			"big":
-				var k := 5
+				var k := 3
 				if bool(a.get("huge", false)):
-					k = 8 if age > 0.1 else 9
-				if UI.text_width(text, k) > w - 24.0:
-					k = 4
-				if age < 0.08:
-					k += 1
+					k = 5
+				if UI.text_width(text, k) > w - 2.0 * (SUB_W + 8.0):     # clear of the subtitle strip
+					k = 2
 				var col := UI.ORPIMENT
 				if text == "1":
 					col = UI.VERMILION
-				UI.text_c(c, w * 0.5, h * (0.2 if bool(a.get("huge", false)) else 0.27), text, k, col, true, fade)
+				UI.text_c(c, w * 0.5, h * (0.15 if bool(a.get("huge", false)) else 0.2), text, k, col, true, fade)
 			"info":
 				UI.text_c(c, w * 0.5, info_y, text, 1, UI.CONCH, true, fade)
 				info_y += 13.0
 			_:
-				var k := 4
+				# Up in the sky above the road, where it doesn't cover the riders or the sight.
+				var k := 2
 				var col := UI.ORPIMENT if str(a["kind"]) == "good" else UI.VERMILION
-				if age < 0.06:
-					k += 1
 				var tw := UI.text_width(text, k)
-				var pos := Vector2(w * 0.5 + float(a["dx"]), h * 0.46 + float(a["dy"]))
+				if tw > w - 80.0:   # a long readout is made smaller, not cut off
+					k = 1
+					tw = UI.text_width(text, k)
+				var pos := Vector2(clampf(w * 0.5 + float(a["dx"]), minf(tw * 0.5 + 8.0, w * 0.5), maxf(w - tw * 0.5 - 8.0, w * 0.5)), h * 0.27 + float(a["dy"]))
 				c.draw_set_transform(pos, float(a["tilt"]), Vector2.ONE)
 				UI.text(c, Vector2(-tw * 0.5, -BASE_HALF * k), text, k, col, true, fade)
 				c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -632,4 +910,7 @@ func _paint_countdown(c: Control, w: float, h: float) -> void:
 	var cd := float(_g(race, "countdown", 0.0))
 	if cd > 0.0 or (_started and _hint_age < 4.0):
 		var hint := "A D STEER    W S SPEED    SHIFT WHIP    SPACE LEAP    J L STRIKE    I SHIELD    ESC PAUSE"
-		UI.text_c(c, w * 0.5, h - 54, hint, 1, UI.CONCH, true, 1.0 if cd > 0.0 else clampf(4.0 - _hint_age, 0.0, 1.0))
+		var fade := 1.0 if cd > 0.0 else clampf(4.0 - _hint_age, 0.0, 1.0)
+		UI.text_c(c, w * 0.5, h - 54, hint, 1, UI.CONCH, true, fade)
+		if str(_g(_p, "ranged_id", "")) != "":
+			UI.text_c(c, w * 0.5, h - 67, "MOUSE AIMS    HOLD RIGHT BUTTON TO DRAW, LET GO TO LOOSE    AIM ABOVE A FAR TARGET", 1, UI.ORPIMENT, true, fade)

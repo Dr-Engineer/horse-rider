@@ -1,0 +1,259 @@
+{
+  "loan": [
+    "I hear your aunt had to lend you silver. Ride carefully.",
+    "Your aunt lent you money? She will mention it. She mentions everything.",
+    "They say you borrowed again. Do not worry, so did I."
+  ],
+  "lose": [
+    "Good race. I want another.",
+    "That was luck. Do it again, if you can.",
+    "I was warming up.",
+    "Enjoy it. It will not last.",
+    "My horse was thinking about lunch."
+  ],
+  "narrator": {
+    "mola": [
+      "Sit, little one. Pour me more tea. You want to hear about the Wood Horse Year? Everyone does. Nobody ever asks about the Ox Year.",
+      "I was seventeen and owned nothing but debt. My horse was a borrowed pack pony named Old Tsampa. My aunt, Ama Choekyi, the wool dealer in Kalimpong, wanted every srang back.",
+      "The villagers called me Joru too, after the snot-nosed hero of the old epic. They did not mean it kindly. I did not mind. He won in the end.",
+      "That year the rich wool dealers and the noble houses made a great wager: a circuit of race meets from the Kham gorges to the Western Gate of Lhasa. The rules? There were no rules worth mentioning.",
+      "I won every race, of course. Well. Most of them. Fine, some of them. Listen.",
+      "By the end of the Spring Meets, people had noticed me. A little. Karma Tobgye, the old caravan guard, gave me advice and then hit me. I accepted both.",
+      "Pon Wangyal Dorje sent over a brick of tea, out of pity. I drank it out of spite. It was very good tea.",
+      "Then came the Summer Festival. People started to bet on me! Ama Choekyi raised the interest. Lithang Samdup wanted to know my secret. I had none. Serkhar Tashi Gyaltsen offered to buy my horse with money he did not have.",
+      "By harvest time, Wangyal had stopped laughing. He still talked. But he had stopped laughing, and that is how you know.",
+      "The last meet was at the Western Gate of Lhasa. Willows, whitewashed walls, and the whole plain full of people. Just me against Pon Wangyal Dorje, who has never lost and tells everyone so.",
+      "I won. Of course I won. The dust had not settled before the crowd reached me, and somebody put a white scarf around my neck.",
+      "Next morning Wangyal arrived at my tent with a barrel of chang. \"You cheated,\" he said. \"Let's race again.\"",
+      "I smiled. We raced for the rest of that year."
+    ],
+    "pola": [
+      "Sit, little one. Pour me more tea. You want to hear about the Wood Horse Year? Everyone does. Nobody ever asks about the Ox Year.",
+      "I was seventeen and owned nothing but debt. My horse was a borrowed pack pony named Old Tsampa. My aunt, Ama Choekyi, the wool dealer in Kalimpong, wanted every srang back.",
+      "They called me Joru, after the snot-nosed hero of the old epic. They did not mean it kindly.",
+      "That year the rich wool dealers and the noble houses made a great wager: a circuit of race meets from the Kham gorges to the Western Gate of Lhasa. The rules? There were no rules worth mentioning.",
+      "I won every race, of course. Well. Most of them. Fine, some of them. Listen.",
+      "By the end of the Spring Meets, people had noticed me. A little. Karma Tobgye, the old caravan guard, gave me advice and then hit me. I accepted both.",
+      "Pon Wangyal Dorje sent over a brick of tea, out of pity. I drank it out of spite. It was very good tea.",
+      "Then came the Summer Festival. People started to bet on me! Ama Choekyi raised the interest. Lithang Samdup wanted to know my secret. I had none. Serkhar Tashi Gyaltsen offered to buy my horse with money he did not have.",
+      "By harvest time, Wangyal had stopped laughing. He still talked. But he had stopped laughing, and that is how you know.",
+      "The last meet was at the Western Gate of Lhasa. Willows, whitewashed walls, and the whole plain full of people. Just me against Pon Wangyal Dorje, who has never lost and tells everyone so.",
+      "I won. Of course I won. The dust had not settled before the crowd reached me, and somebody put a white scarf around my neck.",
+      "Next morning Wangyal arrived at my tent with a barrel of chang. \"You cheated,\" he said. \"Let's race again.\"",
+      "I smiled. We raced for the rest of that year."
+    ]
+  },
+  "rivals": {
+    "ama": [
+      "You owe me eighty srang. Ride accordingly.",
+      "Nobody cheats me twice.",
+      "Interest, dear. Compound interest.",
+      "Family business.",
+      "Interest is due."
+    ],
+    "chakri": [
+      "That hurt! Good. Whoever you are, we're friends now.",
+      "Come closer. I only hit people I like.",
+      "You hit me last time. I liked it. Come here.",
+      "Round two, friend!",
+      "Winnings go to the beggars. Their hats are better than mine.",
+      "Good fight! Take my winnings. Give them to someone who needs them."
+    ],
+    "diki": [
+      "In Calcutta they have machines that do this without the smell.",
+      "Faster! Why is everything so slow?",
+      "You scuffed my silk. Nobody scuffs my silk.",
+      "You will pay for that silk.",
+      "Finally. Something that goes quickly.",
+      "Faster. Always faster."
+    ],
+    "drukmo": [
+      "They named me for a prize. I've come to collect it.",
+      "Watch my back. Not literally. I'm faster.",
+      "You thought I was somebody's prize. Now you know.",
+      "You got in my way once. Do not do it twice.",
+      "I told you I'd collect.",
+      "I came to collect. I collected."
+    ],
+    "dukpa": [
+      "After you. No, truly. Mind the ditch.",
+      "A pleasure. I shall try not to enjoy this.",
+      "I apologise in advance for what comes next.",
+      "I was most polite and you were most rude. I shall be polite again, near a ditch.",
+      "How very kind of everyone.",
+      "A pleasure, as always."
+    ],
+    "genden": [
+      "Your colour is bad. Have you been eating enough butter? Also, I would duck.",
+      "Fight? No, no. Do you have a cough?",
+      "You hit a doctor. Do you know how rare we are? Hold still.",
+      "I will treat that bruise. After I win.",
+      "It is a matter of circulation.",
+      "More butter tea. Doctor's orders."
+    ],
+    "karma": [
+      "Watch the third bend. No, I won't tell you why.",
+      "Forty years on this road. Ask me nothing.",
+      "I told you to watch the bend. You didn't listen. That's on you.",
+      "I know where you hit me. I'll remember it at the third bend.",
+      "I trust nobody. That's how you win.",
+      "Eyes up, boy. And head down."
+    ],
+    "pamo": [
+      "I do not hurry. I arrive.",
+      "My father has a plan. I have the better one.",
+      "I do not hurry. I do not need to.",
+      "You were rash. I noted it.",
+      "I have been watching you. Carefully.",
+      "As expected.",
+      "Patience beats speed."
+    ],
+    "pasang": [
+      "This is my lane. You may ask me to move. I may say no.",
+      "Come to me. I'll wait.",
+      "This is my lane. Come and get it.",
+      "You pushed me out of my lane. Nobody does that.",
+      "You came into my lane. Come again.",
+      "I didn't move. They moved.",
+      "My lane, my race."
+    ],
+    "pema": [
+      "You rode well! Sorry about the arrow.",
+      "I only hit what I aim at. Mostly.",
+      "I'm still sorry about the arrow. There will be more.",
+      "Sorry about the arrow. And the second one.",
+      "Oh! Did I win? How lovely.",
+      "Good race! Come, there is tea."
+    ],
+    "samdup": [
+      "If I fall off, it was on purpose.",
+      "Watch this! Actually, watch that, it's shinier.",
+      "You made me look foolish. Only I'm allowed to do that.",
+      "That was MY scarf. I will have it back, with interest.",
+      "Did you see the scarf? I got the scarf!",
+      "Did you see that? Of course you did."
+    ],
+    "serkhar": [
+      "I will pay you back for that. I will pay everyone back. Eventually.",
+      "Magnificence is expensive.",
+      "You will be repaid. In full. Eventually.",
+      "You will be paid in full. With interest.",
+      "Now I can pay one person.",
+      "Magnificent. Someone else is paying."
+    ],
+    "sonam": [
+      "Salt is heavy. Stones are lighter. Guess which I throw.",
+      "I'm not slow. I'm patient.",
+      "Salt does not hurry. Neither do I. I still arrive.",
+      "You hit me once. I have a great many stones.",
+      "My stones remember your face.",
+      "Slow and stubborn. It works for salt.",
+      "Slow and steady. Mostly steady."
+    ],
+    "temba": [
+      "Under by-law nine, you may not overtake a sixth-rank official. By-law nine is new.",
+      "I have a form for this.",
+      "I have filed a complaint about your elbow.",
+      "I have noted your offences. There are many. I have started a second notebook.",
+      "By-law twelve says the winner is correct.",
+      "By-law twelve: the winner is whoever I say."
+    ],
+    "thupden": [
+      "My horse owes nobody. Neither do I. You owe me a hat.",
+      "I ram. Then I run. Then I ram.",
+      "You owe me a hat. I'm collecting.",
+      "You still owe me a hat.",
+      "Nobody owns the wind!",
+      "Free horse, free man, first across."
+    ],
+    "wangyal": [
+      "A pack pony? Good. I need something to overtake.",
+      "I have never lost. Do come and watch.",
+      "You knocked my hat off in front of my mother. We're friends now. I'm going to kill you.",
+      "Wasn't close. Was it close? It felt close.",
+      "Never lost, never will. Come to my tent and I'll tell you how."
+    ]
+  },
+  "wager": {
+    "ama": [
+      "A wager, dear? It stays in the family either way.",
+      "Hm. Take it. I will add the interest to your bill.",
+      "Interest, dear. It is only business."
+    ],
+    "chakri": [
+      "A wager, friend? Whoever wins, the beggars eat tonight.",
+      "You beat me! We are friends now. Take your silver, friend.",
+      "Good fight! Your silver feeds the beggars. They thank you."
+    ],
+    "diki": [
+      "Bet me, darling. It is only silver. Everything is only silver.",
+      "Faster than me? Impossible. Here, quickly, before anyone sees.",
+      "Faster, always faster. Pay up, darling."
+    ],
+    "drukmo": [
+      "Wager with me. I came to collect. Come and stop me.",
+      "You collected this time. Enjoy it.",
+      "I collect. It is what I do."
+    ],
+    "dukpa": [
+      "Might I suggest a small wager? After you. Mind the ditch.",
+      "How kind of you to win. Here is your silver.",
+      "So kind of you to lose. Thank you ever so much."
+    ],
+    "genden": [
+      "A wager is good for the circulation! Small stakes, big heartbeat.",
+      "Excellent! Strong pulse! Here is your silver. Drink some water.",
+      "That is a doctor's fee. Also, you are dehydrated."
+    ],
+    "karma": [
+      "A wager? I trust nobody. Put your silver where I can see it.",
+      "Hm. Lucky. Take it, and watch your back.",
+      "Forty years on this road. Did you think I would lose?"
+    ],
+    "pamo": [
+      "A wager. I only accept the ones I have already won.",
+      "Interesting. I miscalculated. It will not recur.",
+      "Exactly as calculated. Thank you."
+    ],
+    "pasang": [
+      "Bet me. Pass me in my lane or pay.",
+      "You passed me. Fine. Silver. Do not make a habit of it.",
+      "My lane, my race, my silver."
+    ],
+    "pema": [
+      "A friendly wager? Only a little one, for tea money.",
+      "Oh, well ridden! Here. Spend it on tea.",
+      "Oh dear. Sorry. Thank you. Sorry."
+    ],
+    "samdup": [
+      "A wager! I will win it hanging off the saddle. Watch!",
+      "That was a trick! I let you win! It was a trick!",
+      "Did you see that? Of course you did. Pay up, friend."
+    ],
+    "serkhar": [
+      "A wager! I shall pay you in full if I lose. Eventually.",
+      "You win. I will pay you. Eventually. Today, even. Look!",
+      "Thank you. I shall spend it all on being magnificent."
+    ],
+    "sonam": [
+      "Bet on the slow one. Salt always arrives.",
+      "You were quicker. Take it. Salt will still arrive.",
+      "Salt does not hurry. Salt does collect."
+    ],
+    "temba": [
+      "By-law fourteen permits a small wager. By-law fourteen is new.",
+      "Paid under protest. I am writing this down.",
+      "Payment is due under by-law fourteen. It is still new."
+    ],
+    "thupden": [
+      "A bet! Win, and I owe you. I hate owing.",
+      "I owe you. I hate owing. Take it before I change my mind.",
+      "Now you owe me silver and a hat!"
+    ],
+    "wangyal": [
+      "A wager, friend? Finish ahead of me and the silver is yours. You will not.",
+      "You beat me? Take the silver. I let you. Everyone saw me let you.",
+      "Never lost, never will. Your silver looks lovely in my sleeve."
+    ]
+  }
+}
