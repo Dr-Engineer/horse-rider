@@ -1,0 +1,173 @@
+class_name ArtKit
+extends RefCounted
+## Shared materials and scene dressing helpers, so everything goes through the one look.
+
+const CLASS_RIDER := 0.2
+const CLASS_PROP := 0.5
+const ATLAS_PATH := "res://assets/atlas/atlas.png"
+
+static var _materials: Dictionary = {}
+static var _props: Dictionary = {}
+
+
+static func toon(class_id: float = CLASS_PROP, rim: float = 0.0) -> ShaderMaterial:
+	var key := "%f_%f" % [class_id, rim]
+	if _materials.has(key):
+		return _materials[key]
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/toon.gdshader")
+	m.set_shader_parameter("atlas", load(ATLAS_PATH))
+	m.set_shader_parameter("class_id", class_id)
+	m.set_shader_parameter("rim_strength", rim)
+	_materials[key] = m
+	return m
+
+
+## Put the toon material on every mesh under a node.
+static func apply(node: Node, material: Material) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_override = material
+	for child in node.get_children():
+		apply(child, material)
+
+
+## Instance a prop from assets/models/props/<prop>.glb with the toon material. Meshes named "flags*" get the
+## waving flag material instead.
+static func prop(prop_name: String) -> Node3D:
+	var path := "res://assets/models/props/%s.glb" % prop_name
+	if not _props.has(path):
+		_props[path] = load(path) if ResourceLoader.exists(path) else null
+	if _props[path] == null:
+		push_warning("ArtKit.prop: no prop called '%s'" % prop_name)
+		return Node3D.new()
+	var node: Node3D = (_props[path] as PackedScene).instantiate()
+	apply(node, toon(CLASS_PROP))
+	_apply_flags(node)
+	return node
+
+
+static func _apply_flags(node: Node) -> void:
+	if node is MeshInstance3D and String(node.name).to_lower().begins_with("flags"):
+		(node as MeshInstance3D).material_override = flag_material()
+		(node as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for child in node.get_children():
+		_apply_flags(child)
+
+
+## Ground cover: toon bands, sway, no depth write (so no ink outline).
+static func grass_material() -> ShaderMaterial:
+	if _materials.has("grass"):
+		return _materials["grass"]
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/grass.gdshader")
+	m.set_shader_parameter("atlas", load(ATLAS_PATH))
+	_materials["grass"] = m
+	return m
+
+
+static func flag_material() -> ShaderMaterial:
+	if _materials.has("flag"):
+		return _materials["flag"]
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/flag.gdshader")
+	m.set_shader_parameter("atlas", load(ATLAS_PATH))
+	m.set_shader_parameter("class_id", CLASS_PROP)
+	_materials["flag"] = m
+	return m
+
+
+## The first mesh in a prop's GLB, for MultiMesh scatter. Cached.
+static func prop_mesh(prop_name: String) -> Mesh:
+	var key := "mesh_" + prop_name
+	if _props.has(key):
+		return _props[key]
+	var holder := prop(prop_name)
+	var found: Mesh = null
+	var stack: Array[Node] = [holder]
+	while not stack.is_empty() and found == null:
+		var n: Node = stack.pop_back()
+		if n is MeshInstance3D and (n as MeshInstance3D).mesh != null and not String(n.name).to_lower().begins_with("flags"):
+			found = (n as MeshInstance3D).mesh
+		for c in n.get_children():
+			stack.append(c)
+	holder.free()
+	_props[key] = found
+	return found
+
+
+## WorldEnvironment (flat ambient, linear tonemap, depth fog, banded sky), the sun with sharp shadows and the ink
+## pass. Returns {environment, sun, ink}.
+static func make_world(parent: Node3D, env: Dictionary) -> Dictionary:
+	var sky_mat := ShaderMaterial.new()
+	sky_mat.shader = load("res://shaders/sky.gdshader")
+	var horizon: Color = env.get("sky_horizon", Color("bfe0e8"))
+	sky_mat.set_shader_parameter("top_color", env.get("sky_top", Color("1f4fa8")))
+	sky_mat.set_shader_parameter("horizon_color", horizon)
+	var top: Color = env.get("sky_top", Color("1f4fa8"))
+	var mid := top.lerp(horizon, 0.5)
+	mid = Color.from_hsv(mid.h, minf(mid.s * 1.5, 1.0), mid.v)
+	sky_mat.set_shader_parameter("mid_color", mid)
+	sky_mat.set_shader_parameter("sun_color", env.get("sun_color", Color(1, 0.95, 0.8)).lerp(Color.WHITE, 0.35))
+	sky_mat.set_shader_parameter("cloud_cover", env.get("cloud_cover", 0.5))
+	sky_mat.set_shader_parameter("cloud_shade", horizon.lerp(Color("9db4de"), 0.55))
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	sky.radiance_size = Sky.RADIANCE_SIZE_32
+	sky.process_mode = Sky.PROCESS_MODE_QUALITY
+
+	var e := Environment.new()
+	e.background_mode = Environment.BG_SKY
+	e.sky = sky
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = env.get("ambient", Color(0.85, 0.87, 1.0))
+	e.ambient_light_energy = env.get("ambient_energy", 0.62)
+	e.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	e.fog_enabled = true
+	e.fog_mode = Environment.FOG_MODE_DEPTH
+	e.fog_light_color = env.get("fog_color", horizon)
+	e.fog_light_energy = 1.0
+	e.fog_density = env.get("fog_density", 0.9)
+	e.fog_depth_begin = env.get("fog_begin", 60.0)
+	e.fog_depth_end = env.get("fog_end", 3500.0)
+	e.fog_depth_curve = env.get("fog_curve", 1.5)
+	e.fog_sky_affect = 0.0
+	var we := WorldEnvironment.new()
+	we.environment = e
+	we.name = "WorldEnvironment"
+	parent.add_child(we)
+
+	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
+	sun.rotation_degrees = env.get("sun_rot", Vector3(-42.0, -38.0, 0.0))
+	sun.light_color = env.get("sun_color", Color(1.0, 0.94, 0.82))
+	sun.light_energy = env.get("sun_energy", 0.5)
+	sun.light_specular = 0.0
+	sun.shadow_enabled = true
+	sun.shadow_bias = 0.04
+	sun.shadow_normal_bias = 1.2
+	sun.light_angular_distance = 0.0
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_split_1 = 0.3
+	sun.directional_shadow_max_distance = 150.0
+	sun.directional_shadow_blend_splits = false
+	parent.add_child(sun)
+
+	var ink := ink_pass()
+	parent.add_child(ink)
+	return {"environment": we, "sun": sun, "ink": ink}
+
+
+## Full-screen ink line pass. Add one to the scene.
+static func ink_pass() -> MeshInstance3D:
+	var quad := MeshInstance3D.new()
+	var qm := QuadMesh.new()
+	qm.size = Vector2(2, 2)
+	quad.mesh = qm
+	var im := ShaderMaterial.new()
+	im.shader = load("res://shaders/ink.gdshader")
+	im.render_priority = 100
+	quad.material_override = im
+	quad.extra_cull_margin = 16384.0
+	quad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	quad.name = "InkPass"
+	return quad

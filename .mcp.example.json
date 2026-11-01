@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "godot": {
+      "command": "node",
+      "args": ["<path to>/node_modules/@coding-solo/godot-mcp/build/index.js"],
+      "env": {
+        "GODOT_PATH": "/Applications/Godot.app/Contents/MacOS/Godot"
+      }
+    },
+    "blender": {
+      "command": "mcp-for-blender",
+      "args": [],
+      "env": {
+        "DISABLE_TELEMETRY": "true"
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+.godot/
+*.blend1
+.DS_Store
+demo/*.mp4
+__pycache__/
+*.pyc
+# Machine-specific paths. Copy .mcp.example.json to .mcp.json on each computer.
+.mcp.json
+research_notes/
