@@ -3,7 +3,7 @@
 cd "$(dirname "$0")/.."
 out="$1"; shift
 mkdir -p "$out"
-/Applications/Godot.app/Contents/MacOS/Godot --path . --disable-vsync --resolution 1600x900 -s res://tools/ui_walkthrough.gd -- "$out" "$@" > "$out/log.txt" 2>&1 &
+"${GODOT:-/Applications/Godot.app/Contents/MacOS/Godot}" --path . --disable-vsync --resolution 1600x900 -s res://tools/ui_walkthrough.gd -- "$out" "$@" > "$out/log.txt" 2>&1 &
 pid=$!
 for i in $(seq 1 170); do
   if ! kill -0 $pid 2>/dev/null; then break; fi

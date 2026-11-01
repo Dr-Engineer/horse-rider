@@ -2,7 +2,7 @@
 # Records the demo video from real gameplay: a bot plays, Godot's Movie Maker captures each clip.
 # Usage: tools/record_demo.sh <work_dir> <final.mp4>
 cd "$(dirname "$0")/.."
-W="$1"; FINAL="$2"; G=/Applications/Godot.app/Contents/MacOS/Godot
+W="$1"; FINAL="$2"; G="${GODOT:-/Applications/Godot.app/Contents/MacOS/Godot}"
 mkdir -p "$W" "$(dirname "$FINAL")"
 swiftc -O tools/pngs2mp4.swift -o "$W/pngs2mp4" 2>/dev/null
 swiftc -O tools/joinmp4.swift -o "$W/joinmp4" 2>/dev/null
