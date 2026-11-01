@@ -12,9 +12,10 @@ The key=value pairs become the BMCP_ARGS dict inside the script.
 import base64
 import json
 import os
-import select
+import queue
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,14 +25,25 @@ TIMEOUT_SECONDS = 600
 def start_server():
     with open(os.path.join(ROOT, ".mcp.json")) as f:
         cfg = json.load(f)["mcpServers"]["blender"]
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [cfg["command"]] + cfg["args"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         env=dict(os.environ, **cfg["env"]),
         text=True,
+        encoding="utf-8",
     )
+    # A thread rather than select(), which only works on sockets on Windows.
+    proc.lines = queue.Queue()
+    threading.Thread(target=read_lines, args=(proc,), daemon=True).start()
+    return proc
+
+
+def read_lines(proc):
+    for line in proc.stdout:
+        proc.lines.put(line)
+    proc.lines.put("")
 
 
 def rpc(proc, msg_id, method, params):
@@ -39,10 +51,10 @@ def rpc(proc, msg_id, method, params):
     proc.stdin.flush()
     deadline = time.time() + TIMEOUT_SECONDS
     while time.time() < deadline:
-        ready, _, _ = select.select([proc.stdout], [], [], 1.0)
-        if not ready:
+        try:
+            line = proc.lines.get(timeout=1.0)
+        except queue.Empty:
             continue
-        line = proc.stdout.readline()
         if not line:
             raise RuntimeError("MCP server closed its output")
         reply = json.loads(line)
